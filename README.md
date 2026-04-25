@@ -87,6 +87,25 @@ Open <http://localhost:3000>. Allow camera permission when prompted.
 
 ---
 
+## Deploy to AWS Amplify
+
+The repo is pre-configured for AWS Amplify Hosting (Next.js SSR mode — keeps
+server-side route handlers possible for future API calls). Build spec lives
+in [`amplify.yml`](amplify.yml).
+
+1. **Sign in to the [AWS Amplify console](https://console.aws.amazon.com/amplify/)** and click _Create new app → Host web app_.
+2. **Connect GitHub** → authorize Amplify → pick `SatinderSidhu/digital-card-kiosk` → branch `main`.
+3. Amplify auto-detects Next.js. Leave the build settings alone — `amplify.yml`
+   already declares the correct phases and artifact path.
+4. _(Optional)_ Add environment variables under _App settings → Environment variables_ when you wire a real backend (`ANTHROPIC_API_KEY`, AWS region, etc.). None are required for the current frontend-only build.
+5. **Save and deploy.** First build takes ~3–4 min. You'll get a URL like
+   `https://main.d2xxxxxx.amplifyapp.com`. Every push to `main` auto-deploys.
+6. _(Optional)_ Add a custom domain under _App settings → Custom domains_.
+   ACM certificate + HTTPS are free.
+
+Camera, OCR, and QR decoding all need HTTPS — Amplify provides it by default
+on both the auto-generated `*.amplifyapp.com` URL and any custom domain.
+
 ## Tech stack
 
 | Concern | Choice |
