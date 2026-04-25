@@ -19,7 +19,6 @@ export async function mockCreateSession(payload: SharePayload): Promise<{ url: s
 export async function mockSendEmail(email: string, payload: SharePayload): Promise<{ ok: true }> {
   await wait(700);
   if (!email.includes("@")) throw new Error("Invalid email");
-  // eslint-disable-next-line no-console
   console.info("[mock] email dispatched", { email, session: payload.sessionId });
   return { ok: true };
 }
@@ -29,7 +28,6 @@ export async function mockSendSms(phone: string, payload: SharePayload): Promise
   await wait(700);
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 7) throw new Error("Enter a valid phone number");
-  // eslint-disable-next-line no-console
   console.info("[mock] sms dispatched", { phone, session: payload.sessionId });
   return { ok: true };
 }

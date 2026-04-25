@@ -1,5 +1,7 @@
 # Digital Card Kiosk
 
+[![CI](https://github.com/SatinderSidhu/digital-card-kiosk/actions/workflows/ci.yml/badge.svg)](https://github.com/SatinderSidhu/digital-card-kiosk/actions/workflows/ci.yml)
+
 A self-service kiosk that lets a walk-up customer build and share a digital
 business card in under a minute — take a photo, scan an existing card or QR
 code (or type), pick one of six designs, and send the result to your phone

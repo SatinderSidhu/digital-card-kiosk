@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, Sparkles, Loader2 } from "lucide-react";
 import { useWizard } from "@/lib/store";
@@ -24,18 +24,15 @@ export function BuildSection({ state }: Props) {
   const sessionId = useWizard((s) => s.sessionId);
 
   const [phase, setPhase] = useState<Phase>(template ? "done" : "choose");
+  const buildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!template) {
-      setPhase("choose");
-      return;
-    }
-    if (phase !== "done") {
-      setPhase("building");
-      const t = setTimeout(() => setPhase("done"), BUILD_MS);
-      return () => clearTimeout(t);
-    }
-  }, [template, phase]);
+  // Cleanup timer if the component unmounts mid-build.
+  useEffect(
+    () => () => {
+      if (buildTimerRef.current) clearTimeout(buildTimerRef.current);
+    },
+    [],
+  );
 
   const qrValue = buildVcard(details, sessionId);
   const meta = (id: TemplateId) => TEMPLATES.find((t) => t.id === id);
@@ -50,9 +47,16 @@ export function BuildSection({ state }: Props) {
   const handlePick = (id: TemplateId) => {
     if (phase === "building") return;
     setTemplate(id);
+    setPhase("building");
+    if (buildTimerRef.current) clearTimeout(buildTimerRef.current);
+    buildTimerRef.current = setTimeout(() => setPhase("done"), BUILD_MS);
   };
 
   const handleReset = () => {
+    if (buildTimerRef.current) {
+      clearTimeout(buildTimerRef.current);
+      buildTimerRef.current = null;
+    }
     setTemplate(null);
     setPhase("choose");
   };

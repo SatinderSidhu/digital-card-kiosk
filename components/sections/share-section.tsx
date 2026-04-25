@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -45,11 +45,20 @@ export function ShareSection({ state }: Props) {
 
   const qrValue = buildVcard(details, sessionId);
 
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup celebration timers on unmount.
+  useEffect(
+    () => () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    },
+    [],
+  );
+
   useEffect(() => {
-    if (!template) {
-      setShareUrl(null);
-      return;
-    }
+    if (!template) return;
     let cancelled = false;
     (async () => {
       const res = await mockCreateSession({
@@ -65,21 +74,16 @@ export function ShareSection({ state }: Props) {
     };
   }, [sessionId, details, template, photo]);
 
-  const shared = emailState === "sent" || smsState === "sent";
-
-  useEffect(() => {
-    if (!shared) return;
+  const triggerCelebration = useCallback(() => {
     setCelebrate(true);
     setCountdown(Math.round(AUTO_RESET_MS / 1000));
-    const tick = setInterval(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    intervalRef.current = setInterval(() => {
       setCountdown((c) => (c === null ? null : Math.max(0, c - 1)));
     }, 1000);
-    const t = setTimeout(() => reset(), AUTO_RESET_MS);
-    return () => {
-      clearInterval(tick);
-      clearTimeout(t);
-    };
-  }, [shared, reset]);
+    resetTimerRef.current = setTimeout(() => reset(), AUTO_RESET_MS);
+  }, [reset]);
 
   const handleSendEmail = async () => {
     if (!template) return;
@@ -93,6 +97,7 @@ export function ShareSection({ state }: Props) {
         photoDataUrl: photo,
       });
       setEmailState("sent");
+      triggerCelebration();
     } catch (e) {
       setEmailState("error");
       setEmailError(e instanceof Error ? e.message : "Could not send");
@@ -111,6 +116,7 @@ export function ShareSection({ state }: Props) {
         photoDataUrl: photo,
       });
       setSmsState("sent");
+      triggerCelebration();
     } catch (e) {
       setSmsState("error");
       setSmsError(e instanceof Error ? e.message : "Could not send");
@@ -285,8 +291,20 @@ export function ShareSection({ state }: Props) {
   );
 }
 
+const CONFETTI_COLORS = ["#7c5cff", "#22d3ee", "#ec4899", "#f59e0b", "#10b981"];
+const CONFETTI_COUNT = 40;
+
+// Deterministic spread per-index — avoids impure Math.random in render and
+// gives every piece a different x / delay / duration / spin direction.
+const CONFETTI_PIECES = Array.from({ length: CONFETTI_COUNT }, (_, i) => ({
+  x: (i * 73) % 100,
+  delay: (i % 7) * 0.05,
+  duration: 1.4 + (i % 5) * 0.3,
+  rotation: i % 2 === 0 ? 1 : -1,
+  color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+}));
+
 function Confetti() {
-  const pieces = Array.from({ length: 40 });
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -305,23 +323,16 @@ function Confetti() {
           Card sent!
         </motion.div>
       </div>
-      {pieces.map((_, i) => {
-        const x = Math.random() * 100;
-        const delay = Math.random() * 0.3;
-        const duration = 1.4 + Math.random() * 1.2;
-        const colors = ["#7c5cff", "#22d3ee", "#ec4899", "#f59e0b", "#10b981"];
-        const bg = colors[i % colors.length];
-        return (
-          <motion.span
-            key={i}
-            initial={{ y: -40, x: `${x}vw`, rotate: 0, opacity: 0 }}
-            animate={{ y: "105vh", rotate: 360 * (Math.random() > 0.5 ? 1 : -1), opacity: 1 }}
-            transition={{ duration, delay, ease: "easeIn" }}
-            style={{ background: bg }}
-            className="absolute top-0 w-2 h-3 rounded-sm"
-          />
-        );
-      })}
+      {CONFETTI_PIECES.map((p, i) => (
+        <motion.span
+          key={i}
+          initial={{ y: -40, x: `${p.x}vw`, rotate: 0, opacity: 0 }}
+          animate={{ y: "105vh", rotate: 360 * p.rotation, opacity: 1 }}
+          transition={{ duration: p.duration, delay: p.delay, ease: "easeIn" }}
+          style={{ background: p.color }}
+          className="absolute top-0 w-2 h-3 rounded-sm"
+        />
+      ))}
     </motion.div>
   );
 }
