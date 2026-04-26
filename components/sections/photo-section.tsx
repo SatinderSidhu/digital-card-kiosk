@@ -10,6 +10,7 @@ import {
   ArrowRight,
   Loader2,
   Sparkles,
+  Wand2,
 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { withFallback } from "@/lib/fake-data";
@@ -21,6 +22,8 @@ import { TemplateCard } from "../templates/card-templates";
 type Props = {
   state: "idle" | "active" | "done";
 };
+
+type PhotoOp = "bg" | "ai" | null;
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -42,11 +45,15 @@ export function PhotoSection({ state }: Props) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
-  const [enhancing, setEnhancing] = useState(false);
-  const [bgRemoved, setBgRemoved] = useState(false);
 
-  // Bumped on each capture / retake so an in-flight bg-removal that finishes
-  // after the user moved on doesn't overwrite the latest photo.
+  // Photo-edit state machine. Only one operation runs at a time.
+  const [op, setOp] = useState<PhotoOp>(null);
+  const [bgRemoved, setBgRemoved] = useState(false);
+  const [aiEnhanced, setAiEnhanced] = useState(false);
+  const [opError, setOpError] = useState<string | null>(null);
+
+  // Bumped on every capture / retake / op-start so a stale async result
+  // never overwrites a fresher photo.
   const captureIdRef = useRef(0);
 
   const displayDetails = withFallback(details);
@@ -60,24 +67,29 @@ export function PhotoSection({ state }: Props) {
     setTimeout(() => setFlash(false), 180);
 
     captureIdRef.current++;
-    setEnhancing(false);
+    setOp(null);
     setBgRemoved(false);
+    setAiEnhanced(false);
+    setOpError(null);
     setPhoto(dataUrl);
   }, [setPhoto]);
 
   const retake = useCallback(() => {
     captureIdRef.current++;
-    setEnhancing(false);
+    setOp(null);
     setBgRemoved(false);
+    setAiEnhanced(false);
+    setOpError(null);
     setPhoto(null);
   }, [setPhoto]);
 
   const handleRemoveBackground = useCallback(() => {
-    if (!photo || enhancing || bgRemoved) return;
+    if (!photo || op !== null || bgRemoved) return;
     const myId = ++captureIdRef.current;
+    setOp("bg");
+    setOpError(null);
     void (async () => {
       try {
-        setEnhancing(true);
         const { removeBackground } = await import(
           "@imgly/background-removal"
         );
@@ -88,14 +100,51 @@ export function PhotoSection({ state }: Props) {
         setPhoto(transparentUrl);
         setBgRemoved(true);
       } catch (err) {
-        // Silent fallback — keep the original photo. Most likely WebGPU/WASM
-        // unavailable, or the model fetch was blocked.
         console.warn("Background removal failed:", err);
+        if (captureIdRef.current === myId) {
+          setOpError("Couldn't remove background — try again");
+        }
       } finally {
-        if (captureIdRef.current === myId) setEnhancing(false);
+        if (captureIdRef.current === myId) setOp(null);
       }
     })();
-  }, [photo, enhancing, bgRemoved, setPhoto]);
+  }, [photo, op, bgRemoved, setPhoto]);
+
+  const handleAiEnhance = useCallback(() => {
+    if (!photo || op !== null || aiEnhanced) return;
+    const myId = ++captureIdRef.current;
+    setOp("ai");
+    setOpError(null);
+    void (async () => {
+      try {
+        const res = await fetch("/api/enhance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: photo }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(data.error ?? `Server returned ${res.status}`);
+        }
+        const data = (await res.json()) as { image?: string };
+        if (!data.image) throw new Error("No image returned.");
+        if (captureIdRef.current !== myId) return;
+        setPhoto(data.image);
+        setAiEnhanced(true);
+      } catch (err) {
+        console.warn("AI enhance failed:", err);
+        if (captureIdRef.current === myId) {
+          setOpError(
+            err instanceof Error ? err.message : "AI enhance failed",
+          );
+        }
+      } finally {
+        if (captureIdRef.current === myId) setOp(null);
+      }
+    })();
+  }, [photo, op, aiEnhanced, setPhoto]);
 
   const liveAvatar =
     !photo && !error ? (
@@ -118,19 +167,21 @@ export function PhotoSection({ state }: Props) {
       </div>
     ) : undefined;
 
+  const subtitle = (() => {
+    if (!photo) return "Smile! Tap capture when you're ready";
+    if (op === "bg") return "Removing the background...";
+    if (op === "ai") return "Polishing your headshot with AI...";
+    if (opError) return opError;
+    return isKiosk
+      ? "Looks great — tap Update Info to add your details"
+      : "Looks great — tap Continue to add your details";
+  })();
+
   return (
     <SectionFrame
       index={1}
       title="Your live card"
-      subtitle={
-        photo
-          ? enhancing
-            ? "Removing the background..."
-            : isKiosk
-              ? "Looks great — tap Update Info to add your details"
-              : "Looks great — tap Continue to add your details"
-          : "Smile! Tap capture when you're ready"
-      }
+      subtitle={subtitle}
       state={state}
     >
       <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4">
@@ -167,41 +218,46 @@ export function PhotoSection({ state }: Props) {
               )}
             </AnimatePresence>
 
-            {/* Remove-background magic button — bottom-right corner of the
-                photo column. Hidden once removal succeeds; reappears on
-                retake. Position uses Aurora-template percentages so it
-                tracks the photo edge in both kiosk and compact modes. */}
-            <AnimatePresence>
-              {photo && !bgRemoved && (
-                <motion.button
-                  key="bg-remove"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ delay: 0.15 }}
-                  onClick={handleRemoveBackground}
-                  disabled={enhancing}
-                  title="Remove background"
-                  aria-label="Remove background"
-                  className="absolute z-10 flex items-center justify-center w-9 h-9 rounded-full bg-black/60 backdrop-blur-md border border-white/30 text-white shadow-lg hover:bg-black/75 active:scale-95 transition disabled:opacity-80 disabled:cursor-progress"
-                  style={{ bottom: "5%", right: "70%" }}
-                >
-                  {enhancing ? (
-                    <Loader2 size={16} className="animate-spin text-[#22d3ee]" />
-                  ) : (
-                    <Sparkles size={16} className="text-[#a78bfa]" />
-                  )}
-                </motion.button>
-              )}
-            </AnimatePresence>
+            {/* Photo-edit floating buttons — bottom-right of the photo
+                column. Anchored via Aurora template percentages so they
+                track the photo edge in both modes. */}
+            {photo && (
+              <div
+                className="absolute z-10 flex items-center gap-2"
+                style={{ bottom: "5%", right: "70%" }}
+              >
+                {!aiEnhanced && (
+                  <PhotoOpButton
+                    label="AI studio polish"
+                    icon={<Wand2 size={16} className="text-[#22d3ee]" />}
+                    busyIcon={
+                      <Loader2 size={16} className="animate-spin text-[#22d3ee]" />
+                    }
+                    busy={op === "ai"}
+                    disabled={op !== null}
+                    onClick={handleAiEnhance}
+                  />
+                )}
+                {!bgRemoved && (
+                  <PhotoOpButton
+                    label="Remove background"
+                    icon={<Sparkles size={16} className="text-[#a78bfa]" />}
+                    busyIcon={
+                      <Loader2 size={16} className="animate-spin text-[#a78bfa]" />
+                    }
+                    busy={op === "bg"}
+                    disabled={op !== null}
+                    onClick={handleRemoveBackground}
+                  />
+                )}
+              </div>
+            )}
 
-            {/* Inline-on-card overlays only in kiosk mode. Compact uses
-                the row of buttons below the card + the StepNav footer. */}
+            {/* Inline-on-card overlays only in kiosk mode. */}
             {isKiosk && (
               <AnimatePresence>
                 {photo && (
                   <>
-                    {/* Retake — tucked onto the photo, top-left */}
                     <motion.button
                       key="retake"
                       initial={{ opacity: 0, y: -4 }}
@@ -214,7 +270,6 @@ export function PhotoSection({ state }: Props) {
                       <RefreshCw size={14} /> Retake
                     </motion.button>
 
-                    {/* Update Info — sits where DIGITAL CARD tag would be, inside the info column */}
                     <motion.button
                       key="continue"
                       initial={{ opacity: 0, y: 8 }}
@@ -254,5 +309,37 @@ export function PhotoSection({ state }: Props) {
         </div>
       </div>
     </SectionFrame>
+  );
+}
+
+function PhotoOpButton({
+  label,
+  icon,
+  busyIcon,
+  busy,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  busyIcon: React.ReactNode;
+  busy: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.8 }}
+      transition={{ delay: 0.15 }}
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 backdrop-blur-md border border-white/30 text-white shadow-lg hover:bg-black/75 active:scale-95 transition disabled:opacity-70 disabled:cursor-progress"
+    >
+      {busy ? busyIcon : icon}
+    </motion.button>
   );
 }

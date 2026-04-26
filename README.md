@@ -75,6 +75,27 @@ npm run dev
 
 Open <http://localhost:3000>. Allow camera permission when prompted.
 
+### Photo edit features (after capture)
+
+Two opt-in floating buttons sit on the bottom-right of the photo card:
+
+- **✨ Remove background** — runs `@imgly/background-removal` entirely
+  in the browser (WebGPU/WASM). No API key, no upload. ~30 MB model
+  download on first click, cached after.
+- **🪄 AI studio polish** — POSTs the photo to a Next.js route handler
+  at `/api/enhance` which calls **Google Gemini 2.5 Flash Image**.
+  Returns a polished studio headshot in 5–15 s.
+
+The AI polish requires a Gemini API key:
+
+```bash
+# .env.local (dev) or Amplify env vars (prod)
+GEMINI_API_KEY=your_key_from_google_ai_studio
+```
+
+Without the key the route returns 503 with a helpful message; the
+sparkles bg-removal button still works (it's all local).
+
 ### Scripts
 
 | Command | What it does |
@@ -97,7 +118,12 @@ in [`amplify.yml`](amplify.yml).
 2. **Connect GitHub** → authorize Amplify → pick `SatinderSidhu/digital-card-kiosk` → branch `main`.
 3. Amplify auto-detects Next.js. Leave the build settings alone — `amplify.yml`
    already declares the correct phases and artifact path.
-4. _(Optional)_ Add environment variables under _App settings → Environment variables_ when you wire a real backend (`ANTHROPIC_API_KEY`, AWS region, etc.). None are required for the current frontend-only build.
+4. **Environment variables** under _App settings → Environment variables_:
+   - `GEMINI_API_KEY` — required to enable the AI studio-polish button on
+     the photo card. Without it, the bg-removal button still works (all
+     local) and the AI button returns a 503 with a helpful message.
+   - `NEXT_PUBLIC_SITE_URL` — recommended. Used by the OG image and
+     vCard QR (e.g. `https://main.d2xxxxxx.amplifyapp.com`).
 5. **Save and deploy.** First build takes ~3–4 min. You'll get a URL like
    `https://main.d2xxxxxx.amplifyapp.com`. Every push to `main` auto-deploys.
 6. _(Optional)_ Add a custom domain under _App settings → Custom domains_.
