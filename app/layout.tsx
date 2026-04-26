@@ -7,9 +7,39 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+const TITLE = "Digital Card Kiosk";
+const DESCRIPTION =
+  "Self-service kiosk to build a digital business card in under a minute — snap a photo, scan a card or QR, pick a design, share via QR / SMS / email.";
+
 export const metadata: Metadata = {
-  title: "Digital Card Kiosk",
-  description: "Create your digital business card on a single kiosk page.",
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
+  applicationName: TITLE,
+  authors: [{ name: "Satinder Sidhu" }],
+  keywords: [
+    "digital business card",
+    "kiosk",
+    "QR code",
+    "vCard",
+    "Next.js",
+    "OCR",
+  ],
+  // app/opengraph-image.tsx is auto-detected and added to images for both
+  // openGraph and twitter blocks below — no need to list it explicitly.
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    type: "website",
+    siteName: TITLE,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
 };
 
 export const viewport: Viewport = {
