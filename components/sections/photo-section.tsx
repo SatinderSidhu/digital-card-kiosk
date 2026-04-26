@@ -154,14 +154,16 @@ export function PhotoSection({ state }: Props) {
         mirrored
         screenshotFormat="image/jpeg"
         screenshotQuality={0.95}
-        // Ask for HD by default — the photo column on the Aurora card is up
-        // to ~420×800 and the default 640×480 default looks crunchy when
-        // cropped + scaled into it. The camera will negotiate down if it
-        // can't hit these.
+        // Crucial: by default, getScreenshot() sizes the canvas to the video
+        // element's *display* size (~420 px wide here), discarding the
+        // camera's actual HD resolution. forceScreenshotSourceSize tells it
+        // to capture at videoWidth × videoHeight instead, matching what the
+        // live preview is showing.
+        forceScreenshotSourceSize
         videoConstraints={{
           facingMode: "user",
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
         }}
         onUserMedia={() => setReady(true)}
         onUserMediaError={(e) =>
