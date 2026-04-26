@@ -36,6 +36,7 @@ export function ShareSection({ state }: Props) {
   const isKiosk = displayMode === "kiosk";
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareUrlError, setShareUrlError] = useState<string | null>(null);
   const [email, setEmail] = useState(details.email);
   const [emailState, setEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -63,13 +64,27 @@ export function ShareSection({ state }: Props) {
     if (!template) return;
     let cancelled = false;
     (async () => {
-      const res = await mockCreateSession({
-        sessionId,
-        details,
-        template,
-        photoDataUrl: photo,
-      });
-      if (!cancelled) setShareUrl(res.url);
+      // setState inside an async block runs in a microtask, not the effect
+      // body, so it doesn't trip react-hooks/set-state-in-effect.
+      setShareUrl(null);
+      setShareUrlError(null);
+      try {
+        const res = await mockCreateSession({
+          sessionId,
+          details,
+          template,
+          photoDataUrl: photo,
+        });
+        if (!cancelled) setShareUrl(res.url);
+      } catch (err) {
+        if (!cancelled) {
+          setShareUrlError(
+            err instanceof Error
+              ? err.message
+              : "Could not generate share link",
+          );
+        }
+      }
     })();
     return () => {
       cancelled = true;
@@ -196,6 +211,10 @@ export function ShareSection({ state }: Props) {
                   <p className="text-[11px] text-white/35 mt-1 break-all">{shareUrl}</p>
                 </div>
               </div>
+            ) : shareUrlError ? (
+              <p className="text-xs text-red-300 leading-snug">
+                Couldn&apos;t generate a link: {shareUrlError}
+              </p>
             ) : (
               <div className="flex items-center gap-2 text-white/60 text-sm">
                 <Loader2 size={16} className="animate-spin" /> Generating link...

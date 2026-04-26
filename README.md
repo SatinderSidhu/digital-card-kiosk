@@ -123,15 +123,55 @@ in [`amplify.yml`](amplify.yml).
 3. Amplify auto-detects Next.js. Leave the build settings alone — `amplify.yml`
    already declares the correct phases and artifact path.
 4. **Environment variables** under _App settings → Environment variables_:
-   - `GEMINI_API_KEY` — required to enable the AI studio-polish button on
-     the photo card. Without it, the bg-removal button still works (all
-     local) and the AI button returns a 503 with a helpful message.
-   - `NEXT_PUBLIC_SITE_URL` — recommended. Used by the OG image and
-     vCard QR (e.g. `https://main.d2xxxxxx.amplifyapp.com`).
+   - `GEMINI_API_KEY` — required for the AI studio-polish button on the
+     photo card and for AI card-extraction in step 2. Without it those
+     features return 503 with a helpful message; bg-removal still works
+     (all local).
+   - `DYNAMODB_TABLE` — name of the DynamoDB table backing the public
+     card pages (e.g. `digital-card-kiosk-sessions`). Without it the QR
+     "Scan to phone" code points at a server that 503s.
+   - `NEXT_PUBLIC_SITE_URL` — recommended. Used by the OG image, vCard
+     QR, and the share URL the kiosk hands out (e.g.
+     `https://digitalcard.kitlabs.us`).
+   - `AWS_REGION` — usually injected by Amplify automatically. Override
+     only if your DynamoDB table is in a different region.
 5. **Save and deploy.** First build takes ~3–4 min. You'll get a URL like
    `https://main.d2xxxxxx.amplifyapp.com`. Every push to `main` auto-deploys.
 6. _(Optional)_ Add a custom domain under _App settings → Custom domains_.
    ACM certificate + HTTPS are free.
+
+### DynamoDB setup (one-time, for Scan-to-phone + future SMS/email)
+
+The public card page at `/c/[id]` reads session rows from DynamoDB.
+
+1. **Create the table** in the DynamoDB console (or via the AWS CLI):
+   - Name: `digital-card-kiosk-sessions`
+   - Partition key: `id` (String)
+   - Capacity mode: **On-demand** (cheapest at low traffic; scales to zero)
+   - Once the table is _Active_, open it → _Additional settings_ → _Time to
+     live (TTL)_ → enable, attribute name `expiresAt`. Sessions are saved
+     with a 30-day TTL by default.
+2. **Grant the Amplify SSR Lambda access.** Find the role under IAM that
+   Amplify created for SSR (named like
+   `amplifyconsole-backend-ServiceRole-…`) and attach an inline policy:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": ["dynamodb:GetItem", "dynamodb:PutItem"],
+         "Resource": "arn:aws:dynamodb:us-east-1:ACCOUNT_ID:table/digital-card-kiosk-sessions"
+       }
+     ]
+   }
+   ```
+3. **Set `DYNAMODB_TABLE`** in Amplify env vars (step 4 above) and
+   redeploy.
+
+The kiosk's `/api/sessions` route handler returns 503 with a clear
+message until both pieces (table + IAM) are in place, so partial setup
+is safe to ship.
 
 Camera, OCR, and QR decoding all need HTTPS — Amplify provides it by default
 on both the auto-generated `*.amplifyapp.com` URL and any custom domain.
