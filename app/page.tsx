@@ -37,6 +37,57 @@ export default function Page() {
     document.documentElement.dataset.mode = mode;
   }, [mode]);
 
+  // Auto-recover from "Failed to load chunk" errors. After every Amplify
+  // deploy the chunk filenames change; tabs that were open during the
+  // deploy will throw when they hit a dynamic import (e.g. ZXing or the
+  // bg-removal model) because the old chunk no longer exists on the
+  // server. Detect that and force one reload — guarded via sessionStorage
+  // so we never loop.
+  useEffect(() => {
+    const RELOAD_KEY = "__chunk_reload_attempted__";
+    const looksLikeChunkError = (msg: string | undefined) =>
+      !!msg &&
+      (msg.includes("Failed to load chunk") ||
+        msg.includes("ChunkLoadError") ||
+        msg.includes("Loading chunk") ||
+        msg.includes("Loading CSS chunk") ||
+        msg.includes("Importing a module script failed"));
+
+    const reloadOnce = (msg: string) => {
+      if (typeof window === "undefined") return;
+      try {
+        if (window.sessionStorage.getItem(RELOAD_KEY)) return;
+        window.sessionStorage.setItem(RELOAD_KEY, "1");
+      } catch {
+        // sessionStorage unavailable; reload anyway, worst case is a loop
+        // that the user can break by closing the tab.
+      }
+      console.warn("[chunk-reload] reloading after:", msg);
+      window.location.reload();
+    };
+
+    const onError = (event: ErrorEvent) => {
+      if (looksLikeChunkError(event.message)) reloadOnce(event.message);
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const msg =
+        typeof reason === "string"
+          ? reason
+          : reason instanceof Error
+            ? reason.message
+            : "";
+      if (looksLikeChunkError(msg)) reloadOnce(msg);
+    };
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
   const photoDone = !!photo;
   const detailsDone = hasRealDetails(details);
   const templateDone = !!template;
