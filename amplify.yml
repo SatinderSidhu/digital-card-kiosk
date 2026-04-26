@@ -7,6 +7,12 @@ applications:
             - npm ci
         build:
           commands:
+            # Amplify-console env vars are available at build time but are
+            # NOT automatically forwarded to the SSR Lambda that runs Next.js
+            # route handlers. Write the server-side ones into .env.production
+            # so `next build` bakes them into the runtime config.
+            - echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env.production
+            - echo "NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL" >> .env.production
             - npm run build
       artifacts:
         baseDirectory: .next
