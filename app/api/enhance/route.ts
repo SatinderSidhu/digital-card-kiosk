@@ -87,8 +87,25 @@ export async function POST(req: Request) {
       image: `data:${outMime};base64,${outData}`,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Gemini request failed.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    // The Gemini SDK throws Errors whose .message often contains the raw
+    // JSON response. Pull the inner human-readable message out so the kiosk
+    // shows "Quota exceeded..." instead of a 2 KB blob of nested JSON.
+    let message = "Gemini request failed.";
+    let status = 502;
+    if (err instanceof Error) {
+      message = err.message;
+      try {
+        const parsed = JSON.parse(err.message) as {
+          error?: { message?: string; code?: number; status?: string };
+        };
+        if (parsed.error?.message) message = parsed.error.message;
+        if (parsed.error?.code === 429) status = 429;
+        else if (parsed.error?.code === 401 || parsed.error?.code === 403)
+          status = parsed.error.code;
+      } catch {
+        // err.message wasn't JSON; keep it as-is.
+      }
+    }
+    return NextResponse.json({ error: message }, { status });
   }
 }
