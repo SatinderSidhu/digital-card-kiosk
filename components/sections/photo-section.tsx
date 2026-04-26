@@ -43,6 +43,7 @@ export function PhotoSection({ state }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [bgRemoved, setBgRemoved] = useState(false);
 
   // Bumped on each capture / retake so an in-flight bg-removal that finishes
   // after the user moved on doesn't overwrite the latest photo.
@@ -52,48 +53,49 @@ export function PhotoSection({ state }: Props) {
   const qrValue = buildVcard(displayDetails, sessionId);
   const isKiosk = mode === "kiosk";
 
-  const enhancePhoto = useCallback(
-    async (rawDataUrl: string, captureId: number) => {
-      try {
-        setEnhancing(true);
-        const { removeBackground } = await import(
-          "@imgly/background-removal"
-        );
-        const blob = await removeBackground(rawDataUrl);
-        if (captureIdRef.current !== captureId) return;
-        const transparentUrl = await blobToDataUrl(blob);
-        if (captureIdRef.current !== captureId) return;
-        setPhoto(transparentUrl);
-      } catch (err) {
-        // Fall back to the original photo silently — most likely WebGPU/WASM
-        // unavailable, or the browser blocked the model fetch. Capture still
-        // works, the card just keeps the original webcam frame.
-        console.warn("Background removal failed:", err);
-      } finally {
-        if (captureIdRef.current === captureId) setEnhancing(false);
-      }
-    },
-    [setPhoto],
-  );
-
   const capture = useCallback(() => {
     const dataUrl = webcamRef.current?.getScreenshot();
     if (!dataUrl) return;
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
 
-    // Show the original frame immediately so the customer sees their card
-    // populate; bg-removed version swaps in once the worker finishes.
+    captureIdRef.current++;
+    setEnhancing(false);
+    setBgRemoved(false);
     setPhoto(dataUrl);
-    const myId = ++captureIdRef.current;
-    void enhancePhoto(dataUrl, myId);
-  }, [setPhoto, enhancePhoto]);
+  }, [setPhoto]);
 
   const retake = useCallback(() => {
     captureIdRef.current++;
     setEnhancing(false);
+    setBgRemoved(false);
     setPhoto(null);
   }, [setPhoto]);
+
+  const handleRemoveBackground = useCallback(() => {
+    if (!photo || enhancing || bgRemoved) return;
+    const myId = ++captureIdRef.current;
+    void (async () => {
+      try {
+        setEnhancing(true);
+        const { removeBackground } = await import(
+          "@imgly/background-removal"
+        );
+        const blob = await removeBackground(photo);
+        if (captureIdRef.current !== myId) return;
+        const transparentUrl = await blobToDataUrl(blob);
+        if (captureIdRef.current !== myId) return;
+        setPhoto(transparentUrl);
+        setBgRemoved(true);
+      } catch (err) {
+        // Silent fallback — keep the original photo. Most likely WebGPU/WASM
+        // unavailable, or the model fetch was blocked.
+        console.warn("Background removal failed:", err);
+      } finally {
+        if (captureIdRef.current === myId) setEnhancing(false);
+      }
+    })();
+  }, [photo, enhancing, bgRemoved, setPhoto]);
 
   const liveAvatar =
     !photo && !error ? (
@@ -123,7 +125,7 @@ export function PhotoSection({ state }: Props) {
       subtitle={
         photo
           ? enhancing
-            ? "Polishing your photo..."
+            ? "Removing the background..."
             : isKiosk
               ? "Looks great — tap Update Info to add your details"
               : "Looks great — tap Continue to add your details"
@@ -165,21 +167,31 @@ export function PhotoSection({ state }: Props) {
               )}
             </AnimatePresence>
 
-            {/* Polishing pill — shown over the card while bg removal runs. */}
+            {/* Remove-background magic button — bottom-right corner of the
+                photo column. Hidden once removal succeeds; reappears on
+                retake. Position uses Aurora-template percentages so it
+                tracks the photo edge in both kiosk and compact modes. */}
             <AnimatePresence>
-              {enhancing && (
-                <motion.div
-                  key="polishing"
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className="absolute top-3 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-2 rounded-full bg-black/65 backdrop-blur-md border border-white/20 px-3 py-1.5 text-xs font-medium text-white shadow-lg"
+              {photo && !bgRemoved && (
+                <motion.button
+                  key="bg-remove"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ delay: 0.15 }}
+                  onClick={handleRemoveBackground}
+                  disabled={enhancing}
+                  title="Remove background"
+                  aria-label="Remove background"
+                  className="absolute z-10 flex items-center justify-center w-9 h-9 rounded-full bg-black/60 backdrop-blur-md border border-white/30 text-white shadow-lg hover:bg-black/75 active:scale-95 transition disabled:opacity-80 disabled:cursor-progress"
+                  style={{ bottom: "5%", right: "70%" }}
                 >
-                  <Loader2 size={14} className="animate-spin text-[#22d3ee]" />
-                  <Sparkles size={12} className="text-[#a78bfa]" />
-                  Polishing your photo...
-                </motion.div>
+                  {enhancing ? (
+                    <Loader2 size={16} className="animate-spin text-[#22d3ee]" />
+                  ) : (
+                    <Sparkles size={16} className="text-[#a78bfa]" />
+                  )}
+                </motion.button>
               )}
             </AnimatePresence>
 
