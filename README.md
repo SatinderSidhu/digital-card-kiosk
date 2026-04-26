@@ -130,11 +130,15 @@ in [`amplify.yml`](amplify.yml).
    - `DYNAMODB_TABLE` — name of the DynamoDB table backing the public
      card pages (e.g. `digital-card-kiosk-sessions`). Without it the QR
      "Scan to phone" code points at a server that 503s.
+   - `SES_FROM_EMAIL` — the verified-in-SES sender address used by the
+     "Email me" button (e.g. `noreply@kitlabs.us`). Without it the
+     email button returns 503 with a helpful message.
    - `NEXT_PUBLIC_SITE_URL` — recommended. Used by the OG image, vCard
      QR, and the share URL the kiosk hands out (e.g.
      `https://digitalcard.kitlabs.us`).
    - `AWS_REGION` — usually injected by Amplify automatically. Override
-     only if your DynamoDB table is in a different region.
+     only if your DynamoDB / SES / SNS resources are in a different
+     region.
 5. **Save and deploy.** First build takes ~3–4 min. You'll get a URL like
    `https://main.d2xxxxxx.amplifyapp.com`. Every push to `main` auto-deploys.
 6. _(Optional)_ Add a custom domain under _App settings → Custom domains_.
@@ -172,6 +176,53 @@ The public card page at `/c/[id]` reads session rows from DynamoDB.
 The kiosk's `/api/sessions` route handler returns 503 with a clear
 message until both pieces (table + IAM) are in place, so partial setup
 is safe to ship.
+
+### SES setup (one-time, for the "Email me" button)
+
+1. **Verify the sender** — SES console → _Verified identities_ →
+   _Create identity_. Either verify a single email (e.g.
+   `noreply@kitlabs.us`) or, better, verify the whole domain so any
+   address on it works (DKIM records get added to your DNS).
+2. **Request production access** if you want to email arbitrary
+   recipients. The SES sandbox lets you only send to verified
+   addresses — fine for testing, blocks real customers. Use the
+   _Account dashboard → Request production access_ form; usually
+   approved in under 24 h.
+3. **Set `SES_FROM_EMAIL`** in Amplify env vars to that verified
+   address.
+4. **Grant the SSR Lambda `ses:SendRawEmail` permission** by
+   extending the inline IAM policy from above:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": ["ses:SendRawEmail"],
+     "Resource": "*"
+   }
+   ```
+
+### SNS setup (one-time, for the "Text me the link" button)
+
+1. **Leave the SMS sandbox.** SNS → _Mobile → Text messaging (SMS) →
+   Sandbox destination phone numbers_. Either verify the phone
+   numbers you'll test from, or _Request production access_ via the
+   _Origination numbers_ workflow — same idea as SES.
+2. **No env var to set** — SNS publishes directly to a phone number
+   so there's nothing to configure beyond IAM.
+3. **Grant the SSR Lambda `sns:Publish` permission**:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": ["sns:Publish"],
+     "Resource": "*"
+   }
+   ```
+4. (Optional) Set a custom Sender ID or Origination Number in SNS if
+   you want SMS to come from "DIGICARD" instead of an Amazon pool
+   number — costs vary by country and isn't supported in the US.
+
+US SMS via SNS is **~$0.0075 per message**. Email via SES is
+**~$0.10 per 1,000 messages**. Both are well within "rounding error"
+for kiosk volume.
 
 Camera, OCR, and QR decoding all need HTTPS — Amplify provides it by default
 on both the auto-generated `*.amplifyapp.com` URL and any custom domain.

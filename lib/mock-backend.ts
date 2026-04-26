@@ -7,49 +7,46 @@ export type SharePayload = {
   photoDataUrl: string | null;
 };
 
-/**
- * Persists the current kiosk session via /api/sessions (DynamoDB) and
- * returns the public-card URL the QR / future SMS+email links target.
- * This is no longer a mock — it does an actual POST.
- */
-export async function mockCreateSession(
-  payload: SharePayload,
-): Promise<{ url: string }> {
-  const res = await fetch("/api/sessions", {
+/* The "mock" prefix is historical — these now all hit real route handlers
+ * backed by DynamoDB, SES, and SNS. Kept for diff continuity; can be
+ * renamed to api-client.ts in a follow-up. */
+
+async function postJSON<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error ?? `Server returned ${res.status}`);
   }
-  return (await res.json()) as { url: string };
+  return (await res.json()) as T;
 }
 
-/** TODO: replace with real email API call (SES) — coming in next commit. */
+/** Persists the session to DynamoDB and returns the public share URL. */
+export async function mockCreateSession(
+  payload: SharePayload,
+): Promise<{ url: string }> {
+  return postJSON<{ url: string }>("/api/sessions", payload);
+}
+
+/** Sends the card link + vCard attachment to the given email via AWS SES. */
 export async function mockSendEmail(
   email: string,
   payload: SharePayload,
 ): Promise<{ ok: true }> {
-  await wait(700);
-  if (!email.includes("@")) throw new Error("Invalid email");
-  console.info("[mock] email dispatched", { email, session: payload.sessionId });
-  return { ok: true };
+  return postJSON<{ ok: true }>(`/api/sessions/${payload.sessionId}/email`, {
+    email,
+  });
 }
 
-/** TODO: replace with real SMS API call (SNS) — coming in next commit. */
+/** Sends the card link to the given phone via AWS SNS as a transactional SMS. */
 export async function mockSendSms(
   phone: string,
   payload: SharePayload,
 ): Promise<{ ok: true }> {
-  await wait(700);
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length < 7) throw new Error("Enter a valid phone number");
-  console.info("[mock] sms dispatched", { phone, session: payload.sessionId });
-  return { ok: true };
-}
-
-function wait(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+  return postJSON<{ ok: true }>(`/api/sessions/${payload.sessionId}/sms`, {
+    phone,
+  });
 }

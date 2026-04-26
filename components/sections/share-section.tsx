@@ -241,7 +241,10 @@ export function ShareSection({ state }: Props) {
               <PrimaryButton
                 onClick={handleSendSms}
                 disabled={
-                  phoneDigits < 7 || smsState === "sending" || smsState === "sent"
+                  phoneDigits < 7 ||
+                  smsState === "sending" ||
+                  smsState === "sent" ||
+                  !shareUrl
                 }
                 className="w-full"
               >
@@ -283,7 +286,10 @@ export function ShareSection({ state }: Props) {
               <PrimaryButton
                 onClick={handleSendEmail}
                 disabled={
-                  !email.includes("@") || emailState === "sending" || emailState === "sent"
+                  !email.includes("@") ||
+                  emailState === "sending" ||
+                  emailState === "sent" ||
+                  !shareUrl
                 }
                 className="w-full"
               >
