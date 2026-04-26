@@ -9,9 +9,13 @@ applications:
           commands:
             # Amplify-console env vars are available at build time but are
             # NOT automatically forwarded to the SSR Lambda that runs Next.js
-            # route handlers. Write the server-side ones into .env.production
-            # so `next build` bakes them into the runtime config.
+            # route handlers. Write each server-side var into .env.production
+            # so `next build` bakes them into the runtime config that ships
+            # to Lambda. Add new vars to this list as new routes need them.
             - echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env.production
+            - echo "DYNAMODB_TABLE=$DYNAMODB_TABLE" >> .env.production
+            - echo "S3_PHOTO_BUCKET=$S3_PHOTO_BUCKET" >> .env.production
+            - echo "SES_FROM_EMAIL=$SES_FROM_EMAIL" >> .env.production
             - echo "NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL" >> .env.production
             - npm run build
       artifacts:
