@@ -2,13 +2,17 @@
 
 [![CI](https://github.com/SatinderSidhu/digital-card-kiosk/actions/workflows/ci.yml/badge.svg)](https://github.com/SatinderSidhu/digital-card-kiosk/actions/workflows/ci.yml)
 
+**Live demo:** <https://digitalcard.kitlabs.us>
+
 A self-service kiosk that lets a walk-up customer build and share a digital
 business card in under a minute — take a photo, scan an existing card or QR
 code (or type), pick one of six designs, and send the result to your phone
 via QR, SMS, or email.
 
 Built with **Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4**.
-Camera capture, OCR, and QR decoding all run on-device.
+Camera capture, OCR, and QR decoding all run on-device. AI studio polish
+runs server-side via **Google Gemini 2.5 Flash Image**, deployed on **AWS
+Amplify Hosting**.
 
 ![Hero](docs/screenshots/00-hero.png)
 
