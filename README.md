@@ -130,6 +130,10 @@ in [`amplify.yml`](amplify.yml).
    - `DYNAMODB_TABLE` — name of the DynamoDB table backing the public
      card pages (e.g. `digital-card-kiosk-sessions`). Without it the QR
      "Scan to phone" code points at a server that 503s.
+   - `S3_PHOTO_BUCKET` — name of the S3 bucket the kiosk uploads
+     photos to (e.g. `digital-card-kiosk-photos`). Sessions without a
+     photo (Skip-photo button) work without it; sessions with a photo
+     will 503 until it's set.
    - `SES_FROM_EMAIL` — the verified-in-SES sender address used by the
      "Email me" button (e.g. `noreply@kitlabs.us`). Without it the
      email button returns 503 with a helpful message.
@@ -176,6 +180,49 @@ The public card page at `/c/[id]` reads session rows from DynamoDB.
 The kiosk's `/api/sessions` route handler returns 503 with a clear
 message until both pieces (table + IAM) are in place, so partial setup
 is safe to ship.
+
+### S3 setup (one-time, for storing captured photos)
+
+DynamoDB items max out at 400 KB. To dodge that ceiling and keep photos
+as proper binary objects (preserving PNG transparency for bg-removed
+shots), the `/api/sessions` route uploads each photo to S3 and saves
+only the URL in DynamoDB.
+
+1. **Create the bucket** (S3 console or CLI):
+   - Name: `digital-card-kiosk-photos` (or any name; set the env var to
+     match)
+   - Region: same as the SSR Lambda for fastest PUTs
+   - **Block Public Access**: uncheck _Block all public access_ (we
+     need the bucket to serve photos directly to phones via the public
+     card page)
+2. **Bucket policy** for public-read on the `photos/` prefix:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Sid": "PublicReadPhotos",
+       "Effect": "Allow",
+       "Principal": "*",
+       "Action": "s3:GetObject",
+       "Resource": "arn:aws:s3:::digital-card-kiosk-photos/photos/*"
+     }]
+   }
+   ```
+   Security model is "anyone with the random sessionId can see the
+   photo" — same as the public card page at `/c/[id]`.
+3. **Lifecycle rule** to auto-delete after 30 days, matching the
+   DynamoDB TTL: _Management → Lifecycle rules → Create_, scope to
+   prefix `photos/`, expire current versions after 30 days.
+4. **Grant the SSR Lambda `s3:PutObject` permission** by extending
+   the inline IAM policy:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": ["s3:PutObject"],
+     "Resource": "arn:aws:s3:::digital-card-kiosk-photos/photos/*"
+   }
+   ```
+5. **Set `S3_PHOTO_BUCKET`** in Amplify env vars and redeploy.
 
 ### SES setup (one-time, for the "Email me" button)
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isDbConfigured, saveSession } from "@/lib/db";
+import { isS3Configured, uploadPhoto } from "@/lib/s3";
 import type { CardDetails, TemplateId } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -40,10 +41,7 @@ export async function POST(req: Request) {
   }
 
   if (!body.sessionId || typeof body.sessionId !== "string") {
-    return NextResponse.json(
-      { error: "Missing sessionId." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Missing sessionId." }, { status: 400 });
   }
   if (!body.template || !VALID_TEMPLATES.includes(body.template)) {
     return NextResponse.json(
@@ -52,10 +50,30 @@ export async function POST(req: Request) {
     );
   }
   if (!body.details || typeof body.details !== "object") {
-    return NextResponse.json(
-      { error: "Missing details." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Missing details." }, { status: 400 });
+  }
+
+  // If a photo was captured, upload it to S3 first and store only the URL
+  // in DynamoDB. Skipping the photo (Skip-photo button) is fine — we store
+  // null and the public page renders the card without a portrait.
+  let photoUrl: string | null = null;
+  if (body.photoDataUrl) {
+    if (!isS3Configured()) {
+      return NextResponse.json(
+        {
+          error:
+            "S3_PHOTO_BUCKET is not configured on the server. Set it in your Amplify (or local .env) environment variables.",
+        },
+        { status: 503 },
+      );
+    }
+    try {
+      photoUrl = await uploadPhoto(body.sessionId, body.photoDataUrl);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Photo upload failed.";
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
   }
 
   try {
@@ -63,7 +81,9 @@ export async function POST(req: Request) {
       id: body.sessionId,
       details: body.details,
       template: body.template,
-      photoDataUrl: body.photoDataUrl ?? null,
+      // Field name kept as `photoDataUrl` for diff continuity; contents are
+      // an https URL pointing at S3 (or null if the user skipped the photo).
+      photoDataUrl: photoUrl,
     });
 
     const origin =
@@ -74,7 +94,6 @@ export async function POST(req: Request) {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Could not save session.";
-    // Surface DynamoDB's "ValidationException: ... > 400KB" or auth errors as-is.
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
