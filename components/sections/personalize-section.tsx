@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Camera, Keyboard, X, Check, Pencil } from "lucide-react";
+import clsx from "clsx";
 import { useWizard } from "@/lib/store";
 import type { CardDetails } from "@/lib/types";
 import { withFallback, hasRealDetails } from "@/lib/fake-data";
@@ -13,7 +14,7 @@ import { TemplateCard } from "../templates/card-templates";
 import { UnifiedScanner } from "../scanners/unified-scanner";
 import { DetailsForm } from "../forms/details-form";
 
-type Mode = "idle" | "scanning" | "form";
+type ViewMode = "idle" | "scanning" | "form";
 
 type Props = {
   state: "idle" | "active" | "done";
@@ -25,12 +26,22 @@ export function PersonalizeSection({ state }: Props) {
   const sessionId = useWizard((s) => s.sessionId);
   const setDetails = useWizard((s) => s.setDetails);
   const replaceDetails = useWizard((s) => s.replaceDetails);
+  const displayMode = useWizard((s) => s.mode);
 
-  const [mode, setMode] = useState<Mode>("idle");
+  const [view, setView] = useState<ViewMode>("idle");
 
   const isReal = hasRealDetails(details);
   const displayDetails = withFallback(details);
   const qrValue = buildVcard(displayDetails, sessionId);
+  const isKiosk = displayMode === "kiosk";
+
+  const idleCardWrapper = isKiosk
+    ? "w-[96%] max-w-[1400px]"
+    : "w-[92%] max-w-[760px]";
+  const splitCardMaxWidth = isKiosk ? "max-w-[700px]" : "max-w-[520px]";
+  const splitGrid = isKiosk
+    ? "grid-cols-1 md:grid-cols-2"
+    : "grid-cols-1";
 
   const handleScanResult = (partial: Partial<CardDetails>) => {
     replaceDetails({
@@ -41,7 +52,7 @@ export function PersonalizeSection({ state }: Props) {
       email: partial.email ?? details.email ?? "",
       website: partial.website ?? details.website ?? "",
     });
-    setMode("form");
+    setView("form");
   };
 
   return (
@@ -49,7 +60,7 @@ export function PersonalizeSection({ state }: Props) {
       index={2}
       title="Make it yours"
       subtitle={
-        mode === "scanning"
+        view === "scanning"
           ? "Show a business card or QR code to the camera"
           : isReal
             ? "Looking good — review and continue"
@@ -58,7 +69,7 @@ export function PersonalizeSection({ state }: Props) {
       state={state}
     >
       <AnimatePresence mode="wait">
-        {mode === "idle" && (
+        {view === "idle" && (
           <motion.div
             key="idle"
             initial={{ opacity: 0 }}
@@ -66,7 +77,7 @@ export function PersonalizeSection({ state }: Props) {
             exit={{ opacity: 0 }}
             className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4"
           >
-            <div className="w-[96%] max-w-[1400px] flex items-center justify-center">
+            <div className={clsx(idleCardWrapper, "flex items-center justify-center")}>
               <motion.div
                 layout
                 initial={{ opacity: 0, y: 10 }}
@@ -84,10 +95,10 @@ export function PersonalizeSection({ state }: Props) {
             </div>
 
             <div className="flex-none flex items-center justify-center gap-3 flex-wrap">
-              <PrimaryButton onClick={() => setMode("scanning")} className="px-8">
+              <PrimaryButton onClick={() => setView("scanning")} className="px-8">
                 <Camera size={20} /> {isReal ? "Rescan" : "Scan card or QR code"}
               </PrimaryButton>
-              <GhostButton onClick={() => setMode("form")}>
+              <GhostButton onClick={() => setView("form")}>
                 {isReal ? (
                   <>
                     <Pencil size={16} /> Edit manually
@@ -107,7 +118,7 @@ export function PersonalizeSection({ state }: Props) {
           </motion.div>
         )}
 
-        {mode === "scanning" && (
+        {view === "scanning" && (
           <motion.div
             key="scanning"
             initial={{ opacity: 0 }}
@@ -115,9 +126,9 @@ export function PersonalizeSection({ state }: Props) {
             exit={{ opacity: 0 }}
             className="flex-1 min-h-0 flex flex-col gap-3"
           >
-            <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+            <div className={clsx("flex-1 min-h-0 grid gap-4 items-stretch", splitGrid)}>
               <div className="flex items-center justify-center min-w-0">
-                <div className="w-full max-w-[700px]">
+                <div className={clsx("w-full", splitCardMaxWidth)}>
                   <TemplateCard
                     template="aurora"
                     details={displayDetails}
@@ -131,14 +142,14 @@ export function PersonalizeSection({ state }: Props) {
               </div>
             </div>
             <div className="flex-none flex items-center justify-center">
-              <GhostButton onClick={() => setMode("idle")}>
+              <GhostButton onClick={() => setView("idle")}>
                 <X size={16} /> Cancel scan
               </GhostButton>
             </div>
           </motion.div>
         )}
 
-        {mode === "form" && (
+        {view === "form" && (
           <motion.div
             key="form"
             initial={{ opacity: 0 }}
@@ -146,9 +157,9 @@ export function PersonalizeSection({ state }: Props) {
             exit={{ opacity: 0 }}
             className="flex-1 min-h-0 flex flex-col gap-3"
           >
-            <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+            <div className={clsx("flex-1 min-h-0 grid gap-4 items-stretch", splitGrid)}>
               <div className="flex items-center justify-center min-w-0">
-                <div className="w-full max-w-[700px]">
+                <div className={clsx("w-full", splitCardMaxWidth)}>
                   <TemplateCard
                     template="aurora"
                     details={displayDetails}
@@ -162,10 +173,10 @@ export function PersonalizeSection({ state }: Props) {
               </div>
             </div>
             <div className="flex-none flex items-center justify-between">
-              <GhostButton onClick={() => setMode("idle")}>
+              <GhostButton onClick={() => setView("idle")}>
                 <X size={16} /> Done editing
               </GhostButton>
-              <GhostButton onClick={() => setMode("scanning")}>
+              <GhostButton onClick={() => setView("scanning")}>
                 <Camera size={14} /> Rescan
               </GhostButton>
             </div>

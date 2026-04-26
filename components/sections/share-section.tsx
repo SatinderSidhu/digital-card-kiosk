@@ -32,6 +32,8 @@ export function ShareSection({ state }: Props) {
   const template = useWizard((s) => s.template);
   const sessionId = useWizard((s) => s.sessionId);
   const reset = useWizard((s) => s.reset);
+  const displayMode = useWizard((s) => s.mode);
+  const isKiosk = displayMode === "kiosk";
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [email, setEmail] = useState(details.email);
@@ -76,6 +78,8 @@ export function ShareSection({ state }: Props) {
 
   const triggerCelebration = useCallback(() => {
     setCelebrate(true);
+    // Auto-reset is kiosk-only — laptop users send and stay on the page.
+    if (!isKiosk) return;
     setCountdown(Math.round(AUTO_RESET_MS / 1000));
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
@@ -83,7 +87,7 @@ export function ShareSection({ state }: Props) {
       setCountdown((c) => (c === null ? null : Math.max(0, c - 1)));
     }, 1000);
     resetTimerRef.current = setTimeout(() => reset(), AUTO_RESET_MS);
-  }, [reset]);
+  }, [reset, isKiosk]);
 
   const handleSendEmail = async () => {
     if (!template) return;
@@ -155,7 +159,9 @@ export function ShareSection({ state }: Props) {
           className="w-[96%] mx-auto"
           style={{
             maxWidth:
-              TEMPLATE_ORIENTATION[template] === "portrait" ? 420 : 1400,
+              TEMPLATE_ORIENTATION[template] === "portrait"
+                ? isKiosk ? 420 : 320
+                : isKiosk ? 1400 : 760,
           }}
         >
           <TemplateCard
@@ -166,7 +172,13 @@ export function ShareSection({ state }: Props) {
           />
         </motion.div>
 
-        <div className="w-[96%] max-w-[1400px] mx-auto grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div
+          className={`w-[96%] mx-auto grid gap-4 ${
+            isKiosk
+              ? "max-w-[1400px] grid-cols-1 md:grid-cols-3"
+              : "max-w-[760px] grid-cols-1"
+          }`}
+        >
           <div className="rounded-2xl p-4 glass">
             <div className="flex items-center gap-2 mb-3">
               <Smartphone size={18} className="text-[#22d3ee]" />
@@ -276,11 +288,15 @@ export function ShareSection({ state }: Props) {
           </div>
         </div>
 
-        <div className="w-[96%] max-w-[1400px] mx-auto flex items-center justify-between gap-2">
+        <div
+          className={`w-[96%] mx-auto flex items-center justify-between gap-2 ${
+            isKiosk ? "max-w-[1400px]" : "max-w-[760px]"
+          }`}
+        >
           <GhostButton onClick={reset}>
             <RotateCcw size={14} /> Start over
           </GhostButton>
-          {countdown !== null && (
+          {isKiosk && countdown !== null && (
             <span className="text-xs text-white/50">Restarting in {countdown}s</span>
           )}
         </div>

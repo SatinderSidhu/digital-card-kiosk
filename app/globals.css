@@ -31,6 +31,15 @@ body {
   touch-action: manipulation;
 }
 
+/* Compact (laptop) mode opt-outs for kiosk-only hardening. */
+html[data-mode="compact"],
+html[data-mode="compact"] body {
+  touch-action: auto;
+  overscroll-behavior: auto;
+  user-select: auto;
+  -webkit-user-select: auto;
+}
+
 body {
   background:
     radial-gradient(1200px 800px at 10% -10%, rgba(124, 92, 255, 0.22), transparent 60%),

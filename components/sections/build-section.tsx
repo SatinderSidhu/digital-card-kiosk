@@ -22,6 +22,8 @@ export function BuildSection({ state }: Props) {
   const template = useWizard((s) => s.template);
   const setTemplate = useWizard((s) => s.setTemplate);
   const sessionId = useWizard((s) => s.sessionId);
+  const displayMode = useWizard((s) => s.mode);
+  const isKiosk = displayMode === "kiosk";
 
   const [phase, setPhase] = useState<Phase>(template ? "done" : "choose");
   const buildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,7 +65,18 @@ export function BuildSection({ state }: Props) {
 
   const chosenMeta = template ? meta(template) : undefined;
   const chosenOrientation = chosenMeta?.orientation ?? "landscape";
-  const chosenMaxW = chosenOrientation === "portrait" ? 360 : 640;
+  const chosenMaxW = isKiosk
+    ? chosenOrientation === "portrait" ? 360 : 640
+    : chosenOrientation === "portrait" ? 240 : 460;
+  const pickerOuter = isKiosk
+    ? "max-w-[1200px] w-[96%]"
+    : "max-w-[800px] w-[96%]";
+  const landscapeGrid = isKiosk
+    ? "grid-cols-1 md:grid-cols-3"
+    : "grid-cols-1 md:grid-cols-2";
+  const portraitGrid = isKiosk
+    ? "grid-cols-2 md:grid-cols-3"
+    : "grid-cols-2 md:grid-cols-3";
 
   return (
     <SectionFrame
@@ -85,7 +98,7 @@ export function BuildSection({ state }: Props) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            className="mx-auto max-w-[1200px] w-[96%] flex flex-col gap-5 overflow-auto"
+            className={`mx-auto flex flex-col gap-5 overflow-auto ${pickerOuter}`}
           >
             <TemplateGroup
               label="Horizontal"
@@ -95,7 +108,7 @@ export function BuildSection({ state }: Props) {
               photo={photo}
               qrValue={qrValue}
               onPick={handlePick}
-              className="grid-cols-1 md:grid-cols-3"
+              className={landscapeGrid}
             />
             <TemplateGroup
               label="Vertical"
@@ -105,7 +118,7 @@ export function BuildSection({ state }: Props) {
               photo={photo}
               qrValue={qrValue}
               onPick={handlePick}
-              className="grid-cols-2 md:grid-cols-3"
+              className={portraitGrid}
             />
           </motion.div>
         )}

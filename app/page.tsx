@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, RotateCcw } from "lucide-react";
+import clsx from "clsx";
 import { useWizard } from "@/lib/store";
 import { hasRealDetails } from "@/lib/fake-data";
 import { PhotoSection } from "@/components/sections/photo-section";
@@ -10,10 +11,12 @@ import { PersonalizeSection } from "@/components/sections/personalize-section";
 import { BuildSection } from "@/components/sections/build-section";
 import { ShareSection } from "@/components/sections/share-section";
 import { MarketingSlot } from "@/components/marketing-slot";
+import { ModeSwitcher } from "@/components/mode-switcher";
 import { PrimaryButton, GhostButton } from "@/components/ui";
 
 export default function Page() {
   const step = useWizard((s) => s.step);
+  const mode = useWizard((s) => s.mode);
   const photo = useWizard((s) => s.photoDataUrl);
   const details = useWizard((s) => s.details);
   const template = useWizard((s) => s.template);
@@ -21,10 +24,18 @@ export default function Page() {
   const back = useWizard((s) => s.back);
   const reset = useWizard((s) => s.reset);
   const ensureSession = useWizard((s) => s.ensureSession);
+  const initMode = useWizard((s) => s.initMode);
 
   useEffect(() => {
     ensureSession();
-  }, [ensureSession]);
+    initMode();
+  }, [ensureSession, initMode]);
+
+  // Sync mode to <html data-mode="…"> so global CSS can branch.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.mode = mode;
+  }, [mode]);
 
   const photoDone = !!photo;
   const detailsDone = hasRealDetails(details);
@@ -39,15 +50,30 @@ export default function Page() {
   const canContinue =
     step === 0 ? photoDone : step === 1 ? detailsDone : step === 2 ? templateDone : false;
 
+  const isKiosk = mode === "kiosk";
+
   return (
-    <main className="h-dvh w-full flex flex-col overflow-hidden">
-      <div className="h-1/2 w-full flex flex-col min-h-0 overflow-hidden">
-        <header className="flex-none flex items-center justify-between px-8 py-2.5 backdrop-blur-md bg-[color:var(--background)]/60 border-b border-white/5">
-          <div className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-[#7c5cff] to-[#22d3ee] grid place-items-center text-xs font-black">
+    <main
+      className={clsx(
+        "w-full flex flex-col",
+        isKiosk ? "h-dvh overflow-hidden" : "min-h-dvh",
+      )}
+    >
+      <div
+        className={clsx(
+          "w-full flex flex-col min-h-0",
+          isKiosk ? "h-1/2 overflow-hidden" : "flex-1",
+        )}
+      >
+        <header className="flex-none flex items-center justify-between gap-3 px-5 md:px-8 py-2.5 backdrop-blur-md bg-[color:var(--background)]/60 border-b border-white/5">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="h-7 w-7 shrink-0 rounded-lg bg-gradient-to-br from-[#7c5cff] to-[#22d3ee] grid place-items-center text-xs font-black">
               ◆
             </div>
-            <span className="text-sm font-semibold tracking-tight">Digital Card</span>
+            <span className="text-sm font-semibold tracking-tight truncate">
+              Digital Card
+            </span>
+            <ModeSwitcher />
           </div>
           <StepPills
             labels={["Photo", "Details", "Style", "Share"]}
@@ -55,7 +81,12 @@ export default function Page() {
           />
         </header>
 
-        <div className="flex-1 min-h-0 flex flex-col px-6 md:px-10 py-4 overflow-hidden">
+        <div
+          className={clsx(
+            "flex-1 min-h-0 flex flex-col px-5 md:px-10 py-4",
+            isKiosk ? "overflow-hidden" : "overflow-visible",
+          )}
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={step}
@@ -72,7 +103,9 @@ export default function Page() {
             </motion.div>
           </AnimatePresence>
 
-          {step > 0 && (
+          {/* In kiosk mode, step 1 has its own inline buttons on the card,
+              so we hide StepNav. Compact mode always uses StepNav. */}
+          {(!isKiosk || step > 0) && (
             <StepNav
               step={step}
               canContinue={canContinue}
@@ -84,7 +117,7 @@ export default function Page() {
         </div>
       </div>
 
-      <MarketingSlot className="h-1/2 w-full" />
+      {isKiosk && <MarketingSlot className="h-1/2 w-full" />}
     </main>
   );
 }
