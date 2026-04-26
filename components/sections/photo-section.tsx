@@ -11,6 +11,7 @@ import {
   Loader2,
   Sparkles,
   Wand2,
+  SkipForward,
 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { withFallback } from "@/lib/fake-data";
@@ -229,6 +230,13 @@ export function PhotoSection({ state }: Props) {
               )}
             </AnimatePresence>
 
+            {/* "Magic happening" overlay over the photo column while either
+                AI enhance or bg removal is processing — shimmer sweep,
+                floating sparkles, glowing border. */}
+            <AnimatePresence>
+              {photo && op !== null && <MagicOverlay op={op} />}
+            </AnimatePresence>
+
             {/* Photo-edit floating buttons — bottom-right of the photo
                 column. Anchored via Aurora template percentages so they
                 track the photo edge in both modes. */}
@@ -305,7 +313,7 @@ export function PhotoSection({ state }: Props) {
           </motion.div>
         </div>
 
-        <div className="flex-none flex items-center justify-center gap-3">
+        <div className="flex-none flex items-center justify-center gap-3 flex-wrap">
           {photo ? (
             !isKiosk && (
               <GhostButton onClick={retake}>
@@ -313,9 +321,14 @@ export function PhotoSection({ state }: Props) {
               </GhostButton>
             )
           ) : (
-            <PrimaryButton onClick={capture} disabled={!ready} className="px-10">
-              <Camera size={20} /> Capture
-            </PrimaryButton>
+            <>
+              <PrimaryButton onClick={capture} disabled={!ready} className="px-10">
+                <Camera size={20} /> Capture
+              </PrimaryButton>
+              <GhostButton onClick={next} title="Continue without a photo">
+                <SkipForward size={16} /> Skip photo
+              </GhostButton>
+            </>
           )}
         </div>
       </div>
@@ -352,5 +365,101 @@ function PhotoOpButton({
     >
       {busy ? busyIcon : icon}
     </motion.button>
+  );
+}
+
+/**
+ * Animated overlay shown over the photo column while an AI / bg-removal
+ * operation is in flight. Tints toward cyan for AI, lavender for bg. Combines
+ * a diagonal shimmer sweep, a few floating sparkles, and a pulsing glow
+ * border for an unmistakable "magic happening" feel.
+ *
+ * Position uses Aurora's photo column percentages: left 3% / top 3% /
+ * bottom 3% / right 67% (= 33% from card-left, the photo column edge).
+ */
+function MagicOverlay({ op }: { op: PhotoOp }) {
+  const isAi = op === "ai";
+  const primary = isAi ? "rgba(34, 211, 238, 0.55)" : "rgba(167, 139, 250, 0.55)";
+  const secondary = isAi
+    ? "rgba(124, 92, 255, 0.45)"
+    : "rgba(34, 211, 238, 0.45)";
+  const sparkleColor = isAi ? "text-cyan-300" : "text-violet-300";
+  const sparkleGlow = isAi
+    ? "drop-shadow-[0_0_10px_rgba(34,211,238,0.95)]"
+    : "drop-shadow-[0_0_10px_rgba(167,139,250,0.95)]";
+
+  const sparkles = [
+    { x: "18%", y: "12%", delay: 0, size: 22 },
+    { x: "72%", y: "28%", delay: 0.4, size: 18 },
+    { x: "32%", y: "55%", delay: 0.9, size: 26 },
+    { x: "68%", y: "72%", delay: 1.3, size: 20 },
+    { x: "20%", y: "88%", delay: 1.8, size: 16 },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.25 }}
+      className="absolute z-10 pointer-events-none rounded-2xl overflow-hidden"
+      style={{ left: "3%", right: "67%", top: "3%", bottom: "3%" }}
+    >
+      {/* Backdrop tint so the photo dims slightly while the magic runs. */}
+      <div
+        className="absolute inset-0 rounded-2xl"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 50%, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0.35) 100%)",
+        }}
+      />
+
+      {/* Pulsing glow border. */}
+      <motion.div
+        className="absolute inset-0 rounded-2xl"
+        animate={{
+          boxShadow: [
+            `inset 0 0 24px ${primary}`,
+            `inset 0 0 56px ${secondary}`,
+            `inset 0 0 24px ${primary}`,
+          ],
+        }}
+        transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* Diagonal shimmer sweep. */}
+      <motion.div
+        className="absolute inset-y-0 w-1/2 -skew-x-12"
+        initial={{ x: "-150%" }}
+        animate={{ x: "300%" }}
+        transition={{ duration: 1.8, repeat: Infinity, ease: "linear" }}
+        style={{
+          background: `linear-gradient(90deg, transparent 0%, ${primary} 50%, transparent 100%)`,
+          filter: "blur(8px)",
+        }}
+      />
+
+      {/* Floating sparkles. */}
+      {sparkles.map((s, i) => (
+        <motion.div
+          key={i}
+          className="absolute"
+          style={{ left: s.x, top: s.y }}
+          animate={{
+            opacity: [0, 1, 0],
+            scale: [0, 1.1, 0],
+            rotate: [0, 180, 360],
+          }}
+          transition={{
+            duration: 2,
+            delay: s.delay,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
+        >
+          <Sparkles size={s.size} className={`${sparkleColor} ${sparkleGlow}`} />
+        </motion.div>
+      ))}
+    </motion.div>
   );
 }
