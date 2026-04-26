@@ -3,7 +3,14 @@
 import { useCallback, useRef, useState } from "react";
 import Webcam from "react-webcam";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, RefreshCw, ImageOff, ArrowRight } from "lucide-react";
+import {
+  Camera,
+  RefreshCw,
+  ImageOff,
+  ArrowRight,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { withFallback } from "@/lib/fake-data";
 import { buildVcard } from "@/lib/vcard";
@@ -14,6 +21,15 @@ import { TemplateCard } from "../templates/card-templates";
 type Props = {
   state: "idle" | "active" | "done";
 };
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 
 export function PhotoSection({ state }: Props) {
   const photo = useWizard((s) => s.photoDataUrl);
@@ -26,17 +42,57 @@ export function PhotoSection({ state }: Props) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+
+  // Bumped on each capture / retake so an in-flight bg-removal that finishes
+  // after the user moved on doesn't overwrite the latest photo.
+  const captureIdRef = useRef(0);
 
   const displayDetails = withFallback(details);
   const qrValue = buildVcard(displayDetails, sessionId);
   const isKiosk = mode === "kiosk";
+
+  const enhancePhoto = useCallback(
+    async (rawDataUrl: string, captureId: number) => {
+      try {
+        setEnhancing(true);
+        const { removeBackground } = await import(
+          "@imgly/background-removal"
+        );
+        const blob = await removeBackground(rawDataUrl);
+        if (captureIdRef.current !== captureId) return;
+        const transparentUrl = await blobToDataUrl(blob);
+        if (captureIdRef.current !== captureId) return;
+        setPhoto(transparentUrl);
+      } catch (err) {
+        // Fall back to the original photo silently — most likely WebGPU/WASM
+        // unavailable, or the browser blocked the model fetch. Capture still
+        // works, the card just keeps the original webcam frame.
+        console.warn("Background removal failed:", err);
+      } finally {
+        if (captureIdRef.current === captureId) setEnhancing(false);
+      }
+    },
+    [setPhoto],
+  );
 
   const capture = useCallback(() => {
     const dataUrl = webcamRef.current?.getScreenshot();
     if (!dataUrl) return;
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
+
+    // Show the original frame immediately so the customer sees their card
+    // populate; bg-removed version swaps in once the worker finishes.
     setPhoto(dataUrl);
+    const myId = ++captureIdRef.current;
+    void enhancePhoto(dataUrl, myId);
+  }, [setPhoto, enhancePhoto]);
+
+  const retake = useCallback(() => {
+    captureIdRef.current++;
+    setEnhancing(false);
+    setPhoto(null);
   }, [setPhoto]);
 
   const liveAvatar =
@@ -66,9 +122,11 @@ export function PhotoSection({ state }: Props) {
       title="Your live card"
       subtitle={
         photo
-          ? isKiosk
-            ? "Looks great — tap Update Info to add your details"
-            : "Looks great — tap Continue to add your details"
+          ? enhancing
+            ? "Polishing your photo..."
+            : isKiosk
+              ? "Looks great — tap Update Info to add your details"
+              : "Looks great — tap Continue to add your details"
           : "Smile! Tap capture when you're ready"
       }
       state={state}
@@ -107,6 +165,24 @@ export function PhotoSection({ state }: Props) {
               )}
             </AnimatePresence>
 
+            {/* Polishing pill — shown over the card while bg removal runs. */}
+            <AnimatePresence>
+              {enhancing && (
+                <motion.div
+                  key="polishing"
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="absolute top-3 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-2 rounded-full bg-black/65 backdrop-blur-md border border-white/20 px-3 py-1.5 text-xs font-medium text-white shadow-lg"
+                >
+                  <Loader2 size={14} className="animate-spin text-[#22d3ee]" />
+                  <Sparkles size={12} className="text-[#a78bfa]" />
+                  Polishing your photo...
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Inline-on-card overlays only in kiosk mode. Compact uses
                 the row of buttons below the card + the StepNav footer. */}
             {isKiosk && (
@@ -120,7 +196,7 @@ export function PhotoSection({ state }: Props) {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
                       transition={{ delay: 0.1 }}
-                      onClick={() => setPhoto(null)}
+                      onClick={retake}
                       className="absolute top-[4%] left-[4%] z-10 inline-flex items-center gap-1.5 rounded-full bg-black/55 backdrop-blur-md border border-white/25 px-3 py-1.5 text-xs font-medium text-white shadow-lg hover:bg-black/70 active:scale-95 transition"
                     >
                       <RefreshCw size={14} /> Retake
@@ -154,7 +230,7 @@ export function PhotoSection({ state }: Props) {
         <div className="flex-none flex items-center justify-center gap-3">
           {photo ? (
             !isKiosk && (
-              <GhostButton onClick={() => setPhoto(null)}>
+              <GhostButton onClick={retake}>
                 <RefreshCw size={18} /> Retake
               </GhostButton>
             )
