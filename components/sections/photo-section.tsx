@@ -153,7 +153,16 @@ export function PhotoSection({ state }: Props) {
         audio={false}
         mirrored
         screenshotFormat="image/jpeg"
-        videoConstraints={{ facingMode: "user" }}
+        screenshotQuality={0.95}
+        // Ask for HD by default — the photo column on the Aurora card is up
+        // to ~420×800 and the default 640×480 default looks crunchy when
+        // cropped + scaled into it. The camera will negotiate down if it
+        // can't hit these.
+        videoConstraints={{
+          facingMode: "user",
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+        }}
         onUserMedia={() => setReady(true)}
         onUserMediaError={(e) =>
           setError(typeof e === "string" ? e : e?.message ?? "Permission denied")
