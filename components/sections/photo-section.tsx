@@ -42,6 +42,7 @@ export function PhotoSection({ state }: Props) {
   const sessionId = useWizard((s) => s.sessionId);
   const next = useWizard((s) => s.next);
   const mode = useWizard((s) => s.mode);
+  const cameraDeviceId = useWizard((s) => s.cameraDeviceId);
   const webcamRef = useRef<Webcam>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,8 +162,13 @@ export function PhotoSection({ state }: Props) {
         // to capture at videoWidth × videoHeight instead, matching what the
         // live preview is showing.
         forceScreenshotSourceSize
+        // If the operator picked a specific camera in the header gear menu,
+        // honour that exactly. Otherwise fall back to the front-facing hint
+        // (relevant on phones; on a laptop it just picks a default).
         videoConstraints={{
-          facingMode: "user",
+          ...(cameraDeviceId
+            ? { deviceId: { exact: cameraDeviceId } }
+            : { facingMode: "user" }),
           width: { ideal: 1920 },
           height: { ideal: 1080 },
         }}

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Camera, CheckCircle2, QrCode, Sparkles } from "lucide-react";
 import { parseScannedCode } from "@/lib/parse-card";
+import { useWizard } from "@/lib/store";
 import type { CardDetails } from "@/lib/types";
 
 type Status = "starting" | "watching-qr" | "extracting" | "done" | "error";
@@ -54,6 +55,7 @@ async function downscaleDataUrl(
  */
 export function UnifiedScanner({ onResult }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraDeviceId = useWizard((s) => s.cameraDeviceId);
   const [status, setStatus] = useState<Status>("starting");
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
@@ -70,7 +72,9 @@ export function UnifiedScanner({ onResult }: Props) {
         if (!el) return;
 
         const controls = await reader.decodeFromVideoDevice(
-          undefined,
+          // Operator-selected camera from the header gear menu, or undefined
+          // to let ZXing pick its default.
+          cameraDeviceId ?? undefined,
           el,
           (result) => {
             if (result && !stoppedRef.current) {
@@ -93,7 +97,9 @@ export function UnifiedScanner({ onResult }: Props) {
       stoppedRef.current = true;
       controlsRef.current?.stop();
     };
-  }, [onResult]);
+    // Re-initialise the ZXing reader if the operator switches cameras
+    // while the scanner is open.
+  }, [onResult, cameraDeviceId]);
 
   const captureCard = async () => {
     if (!videoRef.current || stoppedRef.current) return;

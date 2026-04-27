@@ -12,6 +12,7 @@ import { BuildSection } from "@/components/sections/build-section";
 import { ShareSection } from "@/components/sections/share-section";
 import { MarketingSlot } from "@/components/marketing-slot";
 import { ModeSwitcher } from "@/components/mode-switcher";
+import { CameraPicker } from "@/components/camera-picker";
 import { PrimaryButton, GhostButton } from "@/components/ui";
 
 export default function Page() {
@@ -25,11 +26,13 @@ export default function Page() {
   const reset = useWizard((s) => s.reset);
   const ensureSession = useWizard((s) => s.ensureSession);
   const initMode = useWizard((s) => s.initMode);
+  const initCamera = useWizard((s) => s.initCamera);
 
   useEffect(() => {
     ensureSession();
     initMode();
-  }, [ensureSession, initMode]);
+    initCamera();
+  }, [ensureSession, initMode, initCamera]);
 
   // Sync mode to <html data-mode="…"> so global CSS can branch.
   useEffect(() => {
@@ -125,6 +128,7 @@ export default function Page() {
               Digital Card
             </span>
             <ModeSwitcher />
+            <CameraPicker />
           </div>
           <StepPills
             labels={["Photo", "Details", "Style", "Share"]}
