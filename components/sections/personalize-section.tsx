@@ -124,23 +124,35 @@ export function PersonalizeSection({ state }: Props) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex-1 min-h-0 flex flex-col gap-3"
+            className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4"
           >
-            <div className={clsx("flex-1 min-h-0 grid gap-4 items-stretch", splitGrid)}>
-              <div className="flex items-center justify-center min-w-0">
-                <div className={clsx("w-full", splitCardMaxWidth)}>
-                  <TemplateCard
-                    template="aurora"
-                    details={displayDetails}
-                    photoDataUrl={photo}
-                    qrValue={qrValue}
-                  />
-                </div>
-              </div>
-              <div className="min-w-0 min-h-[320px]">
-                <UnifiedScanner onResult={handleScanResult} />
+            <div className={clsx(idleCardWrapper, "flex items-center justify-center")}>
+              <div className="relative w-full">
+                <TemplateCard
+                  template="aurora"
+                  details={displayDetails}
+                  photoDataUrl={photo}
+                  qrValue={qrValue}
+                />
+
+                {/* Camera blooms open from where the contact info usually
+                    sits — the Aurora template's info column lives between
+                    36% and 64% of the card width with the standard 3-3-30
+                    flex layout. Spring-scaled in so it feels like the
+                    middle "opens up" on tap, not a panel sliding in. */}
+                <motion.div
+                  initial={{ scale: 0.45, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.45, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 240, damping: 22 }}
+                  className="absolute z-20 rounded-2xl overflow-hidden ring-2 ring-[#22d3ee]/45 shadow-[0_24px_70px_-15px_rgba(34,211,238,0.5)] bg-[#050510]"
+                  style={{ left: "36%", right: "36%", top: "5%", bottom: "5%" }}
+                >
+                  <UnifiedScanner onResult={handleScanResult} />
+                </motion.div>
               </div>
             </div>
+
             <div className="flex-none flex items-center justify-center">
               <GhostButton onClick={() => setView("idle")}>
                 <X size={16} /> Cancel scan
