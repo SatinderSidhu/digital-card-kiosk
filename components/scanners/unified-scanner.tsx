@@ -152,7 +152,27 @@ export function UnifiedScanner({ onResult }: Props) {
           muted
         />
 
-        <div className="pointer-events-none absolute inset-4 rounded-2xl border-2 border-white/35" />
+        {/* Pulsing landscape-card silhouette tells the user what shape
+            to present. Sized for a standard 3.5×2 business card and
+            kept centred so a card held at arm's length naturally fills
+            it. Hidden once we move past the watching state. */}
+        {status === "watching-qr" && (
+          <motion.div
+            className="pointer-events-none absolute inset-0 flex items-center justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0.35, 0.9, 0.35] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+          >
+            <div className="relative w-[86%] aspect-[1.75/1] rounded-xl border-2 border-white/80 shadow-[0_0_24px_rgba(34,211,238,0.35)]">
+              {/* Corner accents — small brackets in cyan for a subtle
+                  "viewfinder" feel on top of the card silhouette. */}
+              <span className="absolute -top-px -left-px h-4 w-4 border-t-2 border-l-2 border-[#22d3ee] rounded-tl-xl" />
+              <span className="absolute -top-px -right-px h-4 w-4 border-t-2 border-r-2 border-[#22d3ee] rounded-tr-xl" />
+              <span className="absolute -bottom-px -left-px h-4 w-4 border-b-2 border-l-2 border-[#22d3ee] rounded-bl-xl" />
+              <span className="absolute -bottom-px -right-px h-4 w-4 border-b-2 border-r-2 border-[#22d3ee] rounded-br-xl" />
+            </div>
+          </motion.div>
+        )}
 
         {status === "watching-qr" && (
           <motion.div
@@ -162,6 +182,17 @@ export function UnifiedScanner({ onResult }: Props) {
             className="pointer-events-none absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-[#22d3ee] to-transparent"
             style={{ top: 0 }}
           />
+        )}
+
+        {status === "watching-qr" && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/55 backdrop-blur-sm text-[11px] font-medium text-white/90 ring-1 ring-white/15"
+          >
+            Hold a business card or QR code here
+          </motion.div>
         )}
 
         <AnimatePresence>

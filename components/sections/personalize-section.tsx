@@ -136,17 +136,18 @@ export function PersonalizeSection({ state }: Props) {
                 />
 
                 {/* Camera blooms open from where the contact info usually
-                    sits — the Aurora template's info column lives between
-                    36% and 64% of the card width with the standard 3-3-30
-                    flex layout. Spring-scaled in so it feels like the
-                    middle "opens up" on tap, not a panel sliding in. */}
+                    sits — Aurora's info column is between 30% and 70% of
+                    the card width, so the camera overlays it with a touch
+                    of overhang into the photo and QR columns. Spring-
+                    scaled in so it feels like the middle "opens up" on
+                    tap, not a panel sliding in. */}
                 <motion.div
                   initial={{ scale: 0.45, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0.45, opacity: 0 }}
                   transition={{ type: "spring", stiffness: 240, damping: 22 }}
                   className="absolute z-20 rounded-2xl overflow-hidden ring-2 ring-[#22d3ee]/45 shadow-[0_24px_70px_-15px_rgba(34,211,238,0.5)] bg-[#050510]"
-                  style={{ left: "36%", right: "36%", top: "5%", bottom: "5%" }}
+                  style={{ left: "27%", right: "27%", top: "3%", bottom: "3%" }}
                 >
                   <UnifiedScanner onResult={handleScanResult} />
                 </motion.div>
