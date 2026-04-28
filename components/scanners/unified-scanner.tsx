@@ -58,8 +58,12 @@ export function UnifiedScanner({ onResult }: Props) {
   const cameraDeviceId = useWizard((s) => s.cameraDeviceId);
   const [status, setStatus] = useState<Status>("starting");
   const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const stoppedRef = useRef(false);
   const controlsRef = useRef<{ stop: () => void } | null>(null);
+  const detectionStreakRef = useRef(0);
+  const missStreakRef = useRef(0);
+  const captureCardRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     stoppedRef.current = false;
@@ -101,7 +105,132 @@ export function UnifiedScanner({ onResult }: Props) {
     // while the scanner is open.
   }, [onResult, cameraDeviceId]);
 
+  // Auto-capture: watch the live frame for a held-up business card.
+  // When a bright, text-edged region fills the centre guide for ~3
+  // consecutive samples, kick off a 3-2-1 countdown and trigger the
+  // capture. Pulling the card away cancels the countdown.
+  useEffect(() => {
+    if (status !== "watching-qr") {
+      detectionStreakRef.current = 0;
+      missStreakRef.current = 0;
+      return;
+    }
+
+    const sampleCanvas = document.createElement("canvas");
+    sampleCanvas.width = 96;
+    sampleCanvas.height = 56;
+    const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+    if (!sampleCtx) return;
+
+    let cancelled = false;
+    let lastSampledAt = 0;
+    let raf = 0;
+
+    const looksLikeCard = (video: HTMLVideoElement): boolean => {
+      if (!video.videoWidth || !video.videoHeight) return false;
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      // Sample the inner ~70% of the frame, which roughly matches the
+      // 86%-width on-screen guide rectangle.
+      const sw = w * 0.7;
+      const sh = sw / 1.75;
+      if (sh > h * 0.95) return false;
+      const sx = (w - sw) / 2;
+      const sy = (h - sh) / 2;
+
+      sampleCtx.drawImage(
+        video,
+        sx,
+        sy,
+        sw,
+        sh,
+        0,
+        0,
+        sampleCanvas.width,
+        sampleCanvas.height,
+      );
+      const { data } = sampleCtx.getImageData(
+        0,
+        0,
+        sampleCanvas.width,
+        sampleCanvas.height,
+      );
+      const cw = sampleCanvas.width;
+      const chh = sampleCanvas.height;
+      const N = cw * chh;
+
+      const grays = new Uint8ClampedArray(N);
+      let brightSum = 0;
+      for (let i = 0, p = 0; p < N; i += 4, p++) {
+        const g = (data[i] * 76 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+        grays[p] = g;
+        brightSum += g;
+      }
+      const meanBright = brightSum / N;
+
+      let edgeCount = 0;
+      for (let y = 0; y < chh; y++) {
+        for (let x = 1; x < cw; x++) {
+          if (Math.abs(grays[y * cw + x] - grays[y * cw + x - 1]) > 25) {
+            edgeCount++;
+          }
+        }
+      }
+      const edgeRatio = edgeCount / N;
+
+      // Cards are bright (white-ish background) AND have moderate edge
+      // density from text. Faces and plain backgrounds fail one or both.
+      return meanBright > 145 && edgeRatio > 0.06 && edgeRatio < 0.45;
+    };
+
+    const tick = (now: number) => {
+      if (cancelled || stoppedRef.current) return;
+      if (now - lastSampledAt >= 400) {
+        lastSampledAt = now;
+        const v = videoRef.current;
+        if (v) {
+          const detected = looksLikeCard(v);
+          if (detected) {
+            detectionStreakRef.current += 1;
+            missStreakRef.current = 0;
+            if (detectionStreakRef.current >= 3) {
+              setCountdown((c) => (c === null ? 3 : c));
+            }
+          } else {
+            missStreakRef.current += 1;
+            if (missStreakRef.current >= 2) {
+              detectionStreakRef.current = 0;
+              setCountdown((c) => (c !== null ? null : c));
+            }
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [status]);
+
+  // Countdown ticker — 900ms per number, fire capture after "1".
+  useEffect(() => {
+    if (countdown === null) return;
+    const t = window.setTimeout(() => {
+      if (countdown <= 1) {
+        captureCardRef.current();
+        setCountdown(null);
+      } else {
+        setCountdown((c) => (c === null ? null : c - 1));
+      }
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [countdown]);
+
   const captureCard = async () => {
+    setCountdown(null);
     if (!videoRef.current || stoppedRef.current) return;
     const video = videoRef.current;
     setStatus("extracting");
@@ -141,6 +270,10 @@ export function UnifiedScanner({ onResult }: Props) {
       setStatus("error");
     }
   };
+
+  useEffect(() => {
+    captureCardRef.current = captureCard;
+  });
 
   return (
     <div className="relative flex flex-col min-h-0 h-full gap-3">
@@ -184,10 +317,11 @@ export function UnifiedScanner({ onResult }: Props) {
           />
         )}
 
-        {status === "watching-qr" && (
+        {status === "watching-qr" && countdown === null && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
             transition={{ delay: 0.3 }}
             className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/55 backdrop-blur-sm text-[11px] font-medium text-white/90 ring-1 ring-white/15"
           >
@@ -247,6 +381,27 @@ export function UnifiedScanner({ onResult }: Props) {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Auto-capture countdown — pulses each number in/out so a
+            held-still card gets captured cleanly without the user
+            hunting for the button. */}
+        <AnimatePresence mode="wait">
+          {countdown !== null && status === "watching-qr" && (
+            <motion.div
+              key={countdown}
+              initial={{ scale: 0.4, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 1.7, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 280, damping: 22 }}
+              className="pointer-events-none absolute inset-0 flex items-center justify-center"
+            >
+              <div className="absolute inset-0 bg-black/30" />
+              <span className="relative text-[120px] font-black text-white drop-shadow-[0_0_30px_rgba(34,211,238,0.95)] leading-none">
+                {countdown}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {error ? (
@@ -271,7 +426,9 @@ export function UnifiedScanner({ onResult }: Props) {
                 ? "Reading the card with AI..."
                 : status === "done"
                   ? "Got it!"
-                  : "Auto-scanning for a QR code..."}
+                  : countdown !== null
+                    ? `Hold steady — capturing in ${countdown}...`
+                    : "Auto-scanning — hold a card or QR code in the box"}
             </span>
           </div>
           <button
