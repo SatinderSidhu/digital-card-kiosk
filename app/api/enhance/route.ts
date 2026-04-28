@@ -6,11 +6,21 @@ export const runtime = "nodejs";
 // route timeout is 10 s, so bump it.
 export const maxDuration = 60;
 
-const PROMPT = `Convert this photo into a professional studio headshot of the same person.
-Preserve the subject's identity exactly — same face, hair, glasses, expression, and clothing colour.
-Improve lighting (soft, even, studio quality), gently sharpen features without smoothing skin away,
-and replace the background with a clean neutral colour or subtle gradient.
-Output a single image only.`;
+const PROMPT = `Re-light this photo as a professional LinkedIn-style headshot of the SAME person.
+
+Hard rules — do not break these:
+- Preserve the person's identity exactly: same face shape, eye colour, eye shape, eyebrows, skin tone, hair, beard / facial hair, expression, age, and gender.
+- Do NOT add anything that is not already in the original photo. Specifically: do NOT add glasses, hats, jewelry, ties, facial hair, makeup, or any clothing items. Only add an item if it is clearly visible in the original.
+- Do NOT change the clothing style or colour. Keep the same outfit.
+- Do NOT alter the framing or pose. Keep the head and shoulders in the same position.
+
+What to improve:
+- Lighting: soft, even, balanced studio lighting. Remove harsh shadows, colour casts, and blown-out highlights.
+- Skin: keep natural texture. Do not airbrush, smooth, or plasticise the skin.
+- Sharpness: gently sharpen the eyes and hair without over-processing.
+- Background: replace the existing background with a clean neutral grey, soft gradient, or out-of-focus office tone. Keep the person fully in frame.
+
+Output a single edited photograph of the same person. No collage, no text, no logos.`;
 
 type ImageBody = { image?: string };
 

@@ -23,8 +23,10 @@ type Props = {
 };
 
 export function OrientationPills({ template, onChange }: Props) {
+  // No template picked yet → mirror the live-preview fallback, which
+  // is the landscape Aurora. So pills show "Landscape" by default.
   const current: Orientation =
-    template && LANDSCAPE_TEMPLATES.includes(template) ? "landscape" : "portrait";
+    !template || LANDSCAPE_TEMPLATES.includes(template) ? "landscape" : "portrait";
 
   return (
     <div className="inline-flex items-center gap-1 p-1 rounded-full bg-white/5 border border-white/10">
