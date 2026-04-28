@@ -19,6 +19,14 @@ import { buildVcard } from "@/lib/vcard";
 import { SectionFrame } from "./section-frame";
 import { PrimaryButton, GhostButton } from "../ui";
 import { TemplateCard } from "../templates/card-templates";
+import { OrientationPills } from "../orientation-pills";
+
+// Experimental: surface a Landscape / Portrait picker at step 1 so
+// the user can preview the orientation right away and skip ahead with
+// it pre-selected for step 3. Flip to false (or delete the pills block
+// + this flag + the OrientationPills import) to roll the experiment
+// back with no other code touched.
+const EXPERIMENTAL_ORIENTATION_AT_STEP_1 = true;
 
 type Props = {
   state: "idle" | "active" | "done";
@@ -43,6 +51,8 @@ export function PhotoSection({ state }: Props) {
   const next = useWizard((s) => s.next);
   const mode = useWizard((s) => s.mode);
   const cameraDeviceId = useWizard((s) => s.cameraDeviceId);
+  const template = useWizard((s) => s.template);
+  const setTemplate = useWizard((s) => s.setTemplate);
   const webcamRef = useRef<Webcam>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +228,9 @@ export function PhotoSection({ state }: Props) {
             className="relative w-full"
           >
             <TemplateCard
-              template="aurora"
+              template={
+                EXPERIMENTAL_ORIENTATION_AT_STEP_1 ? template ?? "aurora" : "aurora"
+              }
               details={displayDetails}
               photoDataUrl={photo}
               qrValue={qrValue}
@@ -337,6 +349,15 @@ export function PhotoSection({ state }: Props) {
             </>
           )}
         </div>
+
+        {EXPERIMENTAL_ORIENTATION_AT_STEP_1 && (
+          <div className="flex-none flex flex-col items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-white/45">
+              Card style
+            </span>
+            <OrientationPills template={template} onChange={setTemplate} />
+          </div>
+        )}
       </div>
     </SectionFrame>
   );
