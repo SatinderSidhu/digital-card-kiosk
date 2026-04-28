@@ -130,11 +130,12 @@ export function UnifiedScanner({ onResult }: Props) {
       if (!video.videoWidth || !video.videoHeight) return false;
       const w = video.videoWidth;
       const h = video.videoHeight;
-      // Sample the inner ~70% of the frame, which roughly matches the
-      // 86%-width on-screen guide rectangle.
-      const sw = w * 0.7;
-      const sh = sw / 1.75;
-      if (sh > h * 0.95) return false;
+      // The video element is portrait (<video object-cover>) but the
+      // camera stream is usually landscape, so the user only ever sees
+      // the central horizontal slice. Sample that slice — central 40%
+      // wide × 70% tall — which roughly matches the visible area.
+      const sw = w * 0.4;
+      const sh = h * 0.7;
       const sx = (w - sw) / 2;
       const sy = (h - sh) / 2;
 
@@ -160,13 +161,13 @@ export function UnifiedScanner({ onResult }: Props) {
       const N = cw * chh;
 
       const grays = new Uint8ClampedArray(N);
-      let brightSum = 0;
+      let brightPixels = 0;
       for (let i = 0, p = 0; p < N; i += 4, p++) {
         const g = (data[i] * 76 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
         grays[p] = g;
-        brightSum += g;
+        if (g > 180) brightPixels++;
       }
-      const meanBright = brightSum / N;
+      const brightRatio = brightPixels / N;
 
       let edgeCount = 0;
       for (let y = 0; y < chh; y++) {
@@ -178,9 +179,12 @@ export function UnifiedScanner({ onResult }: Props) {
       }
       const edgeRatio = edgeCount / N;
 
-      // Cards are bright (white-ish background) AND have moderate edge
-      // density from text. Faces and plain backgrounds fail one or both.
-      return meanBright > 145 && edgeRatio > 0.06 && edgeRatio < 0.45;
+      // A card shows up as a substantial cluster of bright pixels
+      // (white-ish background) with moderate edge density (text). The
+      // bright-pixel count tolerates the card filling only part of the
+      // frame — faces and plain walls don't have enough bright pixels
+      // *and* edges at the same time.
+      return brightRatio > 0.18 && edgeRatio > 0.05 && edgeRatio < 0.55;
     };
 
     const tick = (now: number) => {
@@ -193,7 +197,7 @@ export function UnifiedScanner({ onResult }: Props) {
           if (detected) {
             detectionStreakRef.current += 1;
             missStreakRef.current = 0;
-            if (detectionStreakRef.current >= 3) {
+            if (detectionStreakRef.current >= 2) {
               setCountdown((c) => (c === null ? 3 : c));
             }
           } else {
