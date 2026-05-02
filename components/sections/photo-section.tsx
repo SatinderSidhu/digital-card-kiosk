@@ -12,6 +12,7 @@ import {
   Sparkles,
   Wand2,
   SkipForward,
+  Undo2,
 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { withFallback } from "@/lib/fake-data";
@@ -20,6 +21,7 @@ import { SectionFrame } from "./section-frame";
 import { PrimaryButton, GhostButton } from "../ui";
 import { TemplateCard } from "../templates/card-templates";
 import { OrientationPills } from "../orientation-pills";
+import { AiPolishMenu, type PolishStyle } from "../ai-polish-menu";
 
 // Experimental: surface a Landscape / Portrait picker at step 1 so
 // the user can preview the orientation right away and skip ahead with
@@ -61,8 +63,13 @@ export function PhotoSection({ state }: Props) {
   // Photo-edit state machine. Only one operation runs at a time.
   const [op, setOp] = useState<PhotoOp>(null);
   const [bgRemoved, setBgRemoved] = useState(false);
-  const [aiEnhanced, setAiEnhanced] = useState(false);
   const [opError, setOpError] = useState<string | null>(null);
+  const [polishMenuOpen, setPolishMenuOpen] = useState(false);
+
+  // Stack of previous photo data URLs so the user can undo AI polish /
+  // background removal one step at a time. Cleared on capture / retake.
+  const photoHistoryRef = useRef<string[]>([]);
+  const [historyDepth, setHistoryDepth] = useState(0);
 
   // Bumped on every capture / retake / op-start so a stale async result
   // never overwrites a fresher photo.
@@ -81,8 +88,9 @@ export function PhotoSection({ state }: Props) {
     captureIdRef.current++;
     setOp(null);
     setBgRemoved(false);
-    setAiEnhanced(false);
     setOpError(null);
+    photoHistoryRef.current = [];
+    setHistoryDepth(0);
     setPhoto(dataUrl);
   }, [setPhoto]);
 
@@ -90,13 +98,31 @@ export function PhotoSection({ state }: Props) {
     captureIdRef.current++;
     setOp(null);
     setBgRemoved(false);
-    setAiEnhanced(false);
     setOpError(null);
+    photoHistoryRef.current = [];
+    setHistoryDepth(0);
     setPhoto(null);
   }, [setPhoto]);
 
+  const handleUndo = useCallback(() => {
+    const previous = photoHistoryRef.current.pop();
+    if (!previous) return;
+    setHistoryDepth(photoHistoryRef.current.length);
+    captureIdRef.current++;
+    setOp(null);
+    setOpError(null);
+    setBgRemoved(false);
+    setPhoto(previous);
+  }, [setPhoto]);
+
+  const pushHistory = useCallback((url: string) => {
+    photoHistoryRef.current.push(url);
+    setHistoryDepth(photoHistoryRef.current.length);
+  }, []);
+
   const handleRemoveBackground = useCallback(() => {
     if (!photo || op !== null || bgRemoved) return;
+    const previousPhoto = photo;
     const myId = ++captureIdRef.current;
     setOp("bg");
     setOpError(null);
@@ -109,6 +135,7 @@ export function PhotoSection({ state }: Props) {
         if (captureIdRef.current !== myId) return;
         const transparentUrl = await blobToDataUrl(blob);
         if (captureIdRef.current !== myId) return;
+        pushHistory(previousPhoto);
         setPhoto(transparentUrl);
         setBgRemoved(true);
       } catch (err) {
@@ -120,43 +147,47 @@ export function PhotoSection({ state }: Props) {
         if (captureIdRef.current === myId) setOp(null);
       }
     })();
-  }, [photo, op, bgRemoved, setPhoto]);
+  }, [photo, op, bgRemoved, setPhoto, pushHistory]);
 
-  const handleAiEnhance = useCallback(() => {
-    if (!photo || op !== null || aiEnhanced) return;
-    const myId = ++captureIdRef.current;
-    setOp("ai");
-    setOpError(null);
-    void (async () => {
-      try {
-        const res = await fetch("/api/enhance", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: photo }),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(data.error ?? `Server returned ${res.status}`);
+  const handleAiEnhance = useCallback(
+    (style?: PolishStyle) => {
+      if (!photo || op !== null) return;
+      const previousPhoto = photo;
+      const myId = ++captureIdRef.current;
+      setOp("ai");
+      setOpError(null);
+      void (async () => {
+        try {
+          const res = await fetch("/api/enhance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: photo, style }),
+          });
+          if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as {
+              error?: string;
+            };
+            throw new Error(data.error ?? `Server returned ${res.status}`);
+          }
+          const data = (await res.json()) as { image?: string };
+          if (!data.image) throw new Error("No image returned.");
+          if (captureIdRef.current !== myId) return;
+          pushHistory(previousPhoto);
+          setPhoto(data.image);
+        } catch (err) {
+          console.warn("AI enhance failed:", err);
+          if (captureIdRef.current === myId) {
+            setOpError(
+              err instanceof Error ? err.message : "AI enhance failed",
+            );
+          }
+        } finally {
+          if (captureIdRef.current === myId) setOp(null);
         }
-        const data = (await res.json()) as { image?: string };
-        if (!data.image) throw new Error("No image returned.");
-        if (captureIdRef.current !== myId) return;
-        setPhoto(data.image);
-        setAiEnhanced(true);
-      } catch (err) {
-        console.warn("AI enhance failed:", err);
-        if (captureIdRef.current === myId) {
-          setOpError(
-            err instanceof Error ? err.message : "AI enhance failed",
-          );
-        }
-      } finally {
-        if (captureIdRef.current === myId) setOp(null);
-      }
-    })();
-  }, [photo, op, aiEnhanced, setPhoto]);
+      })();
+    },
+    [photo, op, setPhoto, pushHistory],
+  );
 
   const liveAvatar =
     !photo && !error ? (
@@ -263,18 +294,16 @@ export function PhotoSection({ state }: Props) {
                 className="absolute z-10 flex items-center gap-2"
                 style={{ bottom: "5%", right: "70%" }}
               >
-                {!aiEnhanced && (
-                  <PhotoOpButton
-                    label="AI studio polish"
-                    icon={<Wand2 size={16} className="text-[#22d3ee]" />}
-                    busyIcon={
-                      <Loader2 size={16} className="animate-spin text-[#22d3ee]" />
-                    }
-                    busy={op === "ai"}
-                    disabled={op !== null}
-                    onClick={handleAiEnhance}
-                  />
-                )}
+                <PhotoOpButton
+                  label="AI studio polish"
+                  icon={<Wand2 size={16} className="text-[#22d3ee]" />}
+                  busyIcon={
+                    <Loader2 size={16} className="animate-spin text-[#22d3ee]" />
+                  }
+                  busy={op === "ai"}
+                  disabled={op !== null}
+                  onClick={() => setPolishMenuOpen(true)}
+                />
                 {!bgRemoved && (
                   <PhotoOpButton
                     label="Remove background"
@@ -287,8 +316,33 @@ export function PhotoSection({ state }: Props) {
                     onClick={handleRemoveBackground}
                   />
                 )}
+                {historyDepth > 0 && op === null && (
+                  <PhotoOpButton
+                    label={`Undo (${historyDepth} step${historyDepth === 1 ? "" : "s"})`}
+                    icon={<Undo2 size={16} className="text-white/85" />}
+                    busyIcon={null}
+                    busy={false}
+                    disabled={false}
+                    onClick={handleUndo}
+                  />
+                )}
               </div>
             )}
+
+            {/* Polish options popover. Closes on Cancel; on Apply, kicks
+                off the existing AI enhance flow with the chosen style
+                appended to the prompt. */}
+            <AnimatePresence>
+              {polishMenuOpen && photo && op === null && (
+                <AiPolishMenu
+                  onApply={(style) => {
+                    setPolishMenuOpen(false);
+                    handleAiEnhance(style);
+                  }}
+                  onClose={() => setPolishMenuOpen(false)}
+                />
+              )}
+            </AnimatePresence>
 
             {/* Inline-on-card overlays only in kiosk mode. */}
             {isKiosk && (
