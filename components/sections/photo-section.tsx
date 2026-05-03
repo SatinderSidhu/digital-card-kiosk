@@ -21,6 +21,7 @@ import { SectionFrame } from "./section-frame";
 import { PrimaryButton, GhostButton } from "../ui";
 import { TemplateCard } from "../templates/card-templates";
 import { OrientationPills } from "../orientation-pills";
+import { SizePills, type CardSize } from "../size-pills";
 import { AiPolishMenu, type PolishStyle } from "../ai-polish-menu";
 
 // Experimental: surface a Landscape / Portrait picker at step 1 so
@@ -65,6 +66,10 @@ export function PhotoSection({ state }: Props) {
   const [bgRemoved, setBgRemoved] = useState(false);
   const [opError, setOpError] = useState<string | null>(null);
   const [polishMenuOpen, setPolishMenuOpen] = useState(false);
+  // Local-only — the pick doesn't carry through to other steps. Default
+  // to L since users tend to want the preview as large as the layout
+  // allows.
+  const [cardSize, setCardSize] = useState<CardSize>("L");
 
   // Stack of previous photo data URLs so the user can undo AI polish /
   // background removal one step at a time. Cleared on capture / retake.
@@ -247,8 +252,16 @@ export function PhotoSection({ state }: Props) {
         <div
           className={
             isKiosk
-              ? "w-[96%] max-w-[1400px] flex items-center justify-center"
-              : "w-[92%] max-w-[760px] flex items-center justify-center"
+              ? cardSize === "S"
+                ? "w-[80%] max-w-[1100px] flex items-center justify-center"
+                : cardSize === "M"
+                  ? "w-[92%] max-w-[1400px] flex items-center justify-center"
+                  : "w-full max-w-[1800px] flex items-center justify-center"
+              : cardSize === "S"
+                ? "w-[80%] max-w-[600px] flex items-center justify-center"
+                : cardSize === "M"
+                  ? "w-[92%] max-w-[760px] flex items-center justify-center"
+                  : "w-[98%] max-w-[1000px] flex items-center justify-center"
           }
         >
           <motion.div
@@ -405,11 +418,19 @@ export function PhotoSection({ state }: Props) {
         </div>
 
         {EXPERIMENTAL_ORIENTATION_AT_STEP_1 && (
-          <div className="flex-none flex flex-col items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-white/45">
-              Card style
-            </span>
-            <OrientationPills template={template} onChange={setTemplate} />
+          <div className="flex-none flex items-end justify-center gap-6 flex-wrap">
+            <div className="flex flex-col items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-white/45">
+                Card style
+              </span>
+              <OrientationPills template={template} onChange={setTemplate} />
+            </div>
+            <div className="flex flex-col items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-white/45">
+                Size
+              </span>
+              <SizePills size={cardSize} onChange={setCardSize} />
+            </div>
           </div>
         )}
       </div>
