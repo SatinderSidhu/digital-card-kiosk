@@ -87,7 +87,10 @@ export async function POST(req: Request) {
     });
 
     // Fire-and-forget onboard API call — does not block the response.
-    onboardExternalApi(body.details, photoUrl).catch(() => {});
+    console.log("[onboard] Calling onboardExternalApi...");
+    onboardExternalApi(body.details, photoUrl).catch((err) => {
+      console.error("[onboard] Unhandled error:", err);
+    });
 
     const origin =
       process.env.NEXT_PUBLIC_SITE_URL ?? new URL(req.url).origin;
