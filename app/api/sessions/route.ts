@@ -115,6 +115,8 @@ async function onboardExternalApi(
   const onboardUrl = "https://mydigitalcard-admin.kitlabs.us/api/onboard";
   const token = "83cjgo$w$hs2mnj&wlwb73x23";
 
+  console.log("[onboard] Hitting external API for:", details.email);
+
   const [firstName, ...rest] = details.fullName.trim().split(" ");
   const lastName = rest.join(" ");
 
@@ -129,14 +131,24 @@ async function onboardExternalApi(
   form.append("company_name", details.company);
 
   if (photoUrl) {
+    console.log("[onboard] Fetching photo from S3:", photoUrl);
     const photoRes = await fetch(photoUrl);
     const blob = await photoRes.blob();
     form.append("head_shot", blob, "headshot.jpg");
+  } else {
+    console.log("[onboard] No photo, skipping head_shot");
   }
 
-  await fetch(onboardUrl, {
-    method: "POST",
-    headers: { "X-Onboard-Token": token },
-    body: form,
-  });
+  try {
+    const res = await fetch(onboardUrl, {
+      method: "POST",
+      headers: { "X-Onboard-Token": token },
+      body: form,
+    });
+    const text = await res.text();
+    console.log("[onboard] Response status:", res.status);
+    console.log("[onboard] Response body:", text);
+  } catch (err) {
+    console.error("[onboard] Fetch error:", err);
+  }
 }
