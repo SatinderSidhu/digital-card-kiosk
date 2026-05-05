@@ -23,6 +23,7 @@ import { TemplateCard } from "../templates/card-templates";
 import { OrientationPills } from "../orientation-pills";
 import { SizePills, type CardSize } from "../size-pills";
 import { AiPolishMenu, type PolishStyle } from "../ai-polish-menu";
+import { TemplatePicker } from "../template-picker";
 
 // Experimental: surface a Landscape / Portrait picker at step 1 so
 // the user can preview the orientation right away and skip ahead with
@@ -418,12 +419,18 @@ export function PhotoSection({ state }: Props) {
         </div>
 
         {EXPERIMENTAL_ORIENTATION_AT_STEP_1 && (
-          <div className="flex-none flex items-end justify-center gap-6 flex-wrap">
+          <div className="flex-none flex items-end justify-center gap-5 flex-wrap">
             <div className="flex flex-col items-center gap-1.5">
               <span className="text-[10px] uppercase tracking-wider text-white/45">
-                Card style
+                Layout
               </span>
               <OrientationPills template={template} onChange={setTemplate} />
+            </div>
+            <div className="flex flex-col items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-white/45">
+                Template
+              </span>
+              <TemplatePicker template={template} onChange={setTemplate} />
             </div>
             <div className="flex flex-col items-center gap-1.5">
               <span className="text-[10px] uppercase tracking-wider text-white/45">

@@ -45,6 +45,11 @@ export const PAGE_TEMPLATES: TemplateId[] = [
   "noir",
 ];
 
+/** The "factory" default template — used as the live preview at step 1
+ *  before the user has explicitly picked anything, and as the target of
+ *  the "Reset to default" action in the template picker. */
+export const FACTORY_DEFAULT_TEMPLATE: TemplateId = "aurora";
+
 export type SectionId = "capture" | "personalize" | "build" | "share";
 
 export const SECTIONS: { id: SectionId; title: string; subtitle: string }[] = [
