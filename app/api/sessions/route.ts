@@ -86,6 +86,9 @@ export async function POST(req: Request) {
       photoDataUrl: photoUrl,
     });
 
+    // Fire-and-forget onboard API call — does not block the response.
+    onboardExternalApi(body.details, photoUrl).catch(() => {});
+
     const origin =
       process.env.NEXT_PUBLIC_SITE_URL ?? new URL(req.url).origin;
     return NextResponse.json({
@@ -96,4 +99,44 @@ export async function POST(req: Request) {
       err instanceof Error ? err.message : "Could not save session.";
     return NextResponse.json({ error: message }, { status: 502 });
   }
+}
+
+function generatePassword(length = 12): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+  return Array.from({ length }, () =>
+    chars[Math.floor(Math.random() * chars.length)]
+  ).join("");
+}
+
+async function onboardExternalApi(
+  details: CardDetails,
+  photoUrl: string | null,
+): Promise<void> {
+  const onboardUrl = "https://mydigitalcard-admin.kitlabs.us/api/onboard";
+  const token = "83cjgo$w$hs2mnj&wlwb73x23";
+
+  const [firstName, ...rest] = details.fullName.trim().split(" ");
+  const lastName = rest.join(" ");
+
+  const form = new FormData();
+  form.append("name", details.fullName);
+  form.append("email", details.email);
+  form.append("password", generatePassword());
+  form.append("first_name", firstName);
+  form.append("last_name", lastName);
+  form.append("phone_1", details.phone);
+  form.append("job_role_title", details.title);
+  form.append("company_name", details.company);
+
+  if (photoUrl) {
+    const photoRes = await fetch(photoUrl);
+    const blob = await photoRes.blob();
+    form.append("head_shot", blob, "headshot.jpg");
+  }
+
+  await fetch(onboardUrl, {
+    method: "POST",
+    headers: { "X-Onboard-Token": token },
+    body: form,
+  });
 }
