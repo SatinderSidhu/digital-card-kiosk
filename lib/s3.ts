@@ -1,4 +1,5 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 let client: S3Client | null = null;
 
@@ -12,6 +13,10 @@ function getClient(): S3Client {
 
 export function isS3Configured(): boolean {
   return !!process.env.S3_PHOTO_BUCKET;
+}
+
+export function isReviewS3Configured(): boolean {
+  return !!process.env.S3_REVIEW_BUCKET;
 }
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -66,4 +71,52 @@ export async function uploadPhoto(
   // Use the path-style URL pattern that works in every region without
   // needing to know which AWS partition the bucket lives in.
   return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+}
+
+const REVIEW_MIME_TO_EXT: Record<string, string> = {
+  "video/webm": "webm",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+};
+
+/**
+ * Generate a presigned PUT URL the browser can use to upload a review video
+ * directly to S3. Avoids streaming the (typically 10–30 MB) blob through the
+ * Lambda/Amplify origin.
+ *
+ * Caller is responsible for:
+ *   - the bucket existing in the same region as AWS_REGION
+ *   - CORS configured on the bucket to allow PUT from the kiosk origin
+ *   - a bucket policy granting `s3:GetObject` on `reviews/*` to `*` so the
+ *     emailed link is openable
+ */
+export async function presignReviewUpload(
+  sessionId: string,
+  contentType: string,
+  expiresInSec = 600,
+): Promise<{ uploadUrl: string; objectUrl: string; key: string }> {
+  const bucket = process.env.S3_REVIEW_BUCKET;
+  if (!bucket) {
+    throw new Error("S3_REVIEW_BUCKET is not configured.");
+  }
+
+  const ext = REVIEW_MIME_TO_EXT[contentType.toLowerCase()] ?? "webm";
+  const key = `reviews/${sessionId}.${ext}`;
+  const region = process.env.AWS_REGION ?? "us-east-1";
+
+  const uploadUrl = await getSignedUrl(
+    getClient(),
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: contentType,
+    }),
+    { expiresIn: expiresInSec },
+  );
+
+  return {
+    uploadUrl,
+    objectUrl: `https://${bucket}.s3.${region}.amazonaws.com/${key}`,
+    key,
+  };
 }

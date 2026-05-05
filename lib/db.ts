@@ -3,10 +3,11 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { CardDetails, TemplateId } from "./types";
 
-/** Days a session lives in DynamoDB before TTL deletes it. */
+/** Days a session/review lives in DynamoDB before TTL deletes it. */
 const TTL_DAYS = 30;
 
 export type SessionRecord = {
@@ -17,6 +18,19 @@ export type SessionRecord = {
   /** Unix seconds. */
   createdAt: number;
   /** Unix seconds. DynamoDB's TTL feature deletes the row when this passes. */
+  expiresAt: number;
+};
+
+export type ReviewRecord = {
+  id: string;
+  name: string;
+  title: string | null;
+  email: string;
+  videoUrl: string;
+  videoMimeType: string;
+  /** Unix seconds. */
+  createdAt: number;
+  /** Unix seconds — DynamoDB TTL. */
   expiresAt: number;
 };
 
@@ -46,8 +60,22 @@ function tableName(): string {
   return t;
 }
 
+function reviewsTableName(): string {
+  const t = process.env.DYNAMODB_REVIEWS_TABLE;
+  if (!t) {
+    throw new Error(
+      "DYNAMODB_REVIEWS_TABLE env var is not set — cannot reach the reviews table.",
+    );
+  }
+  return t;
+}
+
 export function isDbConfigured(): boolean {
   return !!process.env.DYNAMODB_TABLE;
+}
+
+export function isReviewsDbConfigured(): boolean {
+  return !!process.env.DYNAMODB_REVIEWS_TABLE;
 }
 
 /**
@@ -84,4 +112,69 @@ export async function getSession(id: string): Promise<SessionRecord | null> {
     }),
   );
   return (result.Item as SessionRecord | undefined) ?? null;
+}
+
+/** List all sessions. Scan is fine at kiosk scale (<10k rows); switch to a
+ *  GSI on createdAt if this grows. Sorted newest-first. */
+export async function listSessions(): Promise<SessionRecord[]> {
+  const items: SessionRecord[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+  do {
+    const res = await getClient().send(
+      new ScanCommand({
+        TableName: tableName(),
+        ExclusiveStartKey: lastKey,
+      }),
+    );
+    if (res.Items) items.push(...(res.Items as SessionRecord[]));
+    lastKey = res.LastEvaluatedKey;
+  } while (lastKey);
+  items.sort((a, b) => b.createdAt - a.createdAt);
+  return items;
+}
+
+export async function saveReview(
+  record: Omit<ReviewRecord, "createdAt" | "expiresAt">,
+): Promise<ReviewRecord> {
+  const now = Math.floor(Date.now() / 1000);
+  const full: ReviewRecord = {
+    ...record,
+    createdAt: now,
+    expiresAt: now + TTL_DAYS * 24 * 60 * 60,
+  };
+  await getClient().send(
+    new PutCommand({
+      TableName: reviewsTableName(),
+      Item: full,
+    }),
+  );
+  return full;
+}
+
+export async function getReview(id: string): Promise<ReviewRecord | null> {
+  const result = await getClient().send(
+    new GetCommand({
+      TableName: reviewsTableName(),
+      Key: { id },
+      ConsistentRead: true,
+    }),
+  );
+  return (result.Item as ReviewRecord | undefined) ?? null;
+}
+
+export async function listReviews(): Promise<ReviewRecord[]> {
+  const items: ReviewRecord[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+  do {
+    const res = await getClient().send(
+      new ScanCommand({
+        TableName: reviewsTableName(),
+        ExclusiveStartKey: lastKey,
+      }),
+    );
+    if (res.Items) items.push(...(res.Items as ReviewRecord[]));
+    lastKey = res.LastEvaluatedKey;
+  } while (lastKey);
+  items.sort((a, b) => b.createdAt - a.createdAt);
+  return items;
 }
