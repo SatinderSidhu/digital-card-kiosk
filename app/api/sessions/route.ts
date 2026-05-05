@@ -77,6 +77,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    console.log("[session] Saving session:", body.sessionId);
     await saveSession({
       id: body.sessionId,
       details: body.details,
@@ -86,11 +87,10 @@ export async function POST(req: Request) {
       photoDataUrl: photoUrl,
     });
 
-    // Fire-and-forget onboard API call — does not block the response.
+    // Call onboard API before responding so it completes in the serverless context.
     console.log("[onboard] Calling onboardExternalApi...");
-    onboardExternalApi(body.details, photoUrl).catch((err) => {
-      console.error("[onboard] Unhandled error:", err);
-    });
+    console.log("[onboard] photoUrl:", photoUrl);
+    await onboardExternalApi(body.details, photoUrl);
 
     const origin =
       process.env.NEXT_PUBLIC_SITE_URL ?? new URL(req.url).origin;
@@ -147,6 +147,7 @@ async function onboardExternalApi(
       method: "POST",
       headers: { "X-Onboard-Token": token },
       body: form,
+      signal: AbortSignal.timeout(10000),
     });
     const text = await res.text();
     console.log("[onboard] Response status:", res.status);
