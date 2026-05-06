@@ -10,7 +10,6 @@ import {
   Smartphone,
   Sparkles,
   RotateCcw,
-  MessageSquare,
 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { TEMPLATE_ORIENTATION } from "@/lib/types";
@@ -18,7 +17,7 @@ import { buildVcard } from "@/lib/vcard";
 import { SectionFrame } from "./section-frame";
 import { Field, TextInput, PrimaryButton, GhostButton } from "../ui";
 import { TemplateCard } from "../templates/card-templates";
-import { mockCreateSession, mockSendEmail, mockSendSms } from "@/lib/mock-backend";
+import { mockCreateSession, mockSendEmail } from "@/lib/mock-backend";
 
 const AUTO_RESET_MS = 25000;
 
@@ -40,9 +39,6 @@ export function ShareSection({ state }: Props) {
   const [email, setEmail] = useState(details.email);
   const [emailState, setEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [phone, setPhone] = useState(details.phone);
-  const [smsState, setSmsState] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [smsError, setSmsError] = useState<string | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -123,27 +119,6 @@ export function ShareSection({ state }: Props) {
     }
   };
 
-  const handleSendSms = async () => {
-    if (!template) return;
-    setSmsError(null);
-    setSmsState("sending");
-    try {
-      await mockSendSms(phone.trim(), {
-        sessionId,
-        details,
-        template,
-        photoDataUrl: photo,
-      });
-      setSmsState("sent");
-      triggerCelebration();
-    } catch (e) {
-      setSmsState("error");
-      setSmsError(e instanceof Error ? e.message : "Could not send");
-    }
-  };
-
-  const phoneDigits = phone.replace(/\D/g, "").length;
-
   if (!template) {
     return (
       <SectionFrame
@@ -153,7 +128,7 @@ export function ShareSection({ state }: Props) {
         state={state}
       >
         <div className="rounded-2xl p-6 glass text-center text-sm text-white/45">
-          Your card, QR, text, and email options will appear here.
+          Your card, QR, and email options will appear here.
         </div>
       </SectionFrame>
     );
@@ -163,7 +138,7 @@ export function ShareSection({ state }: Props) {
     <SectionFrame
       index={4}
       title="Take it with you"
-      subtitle="Scan, text, or email the link to yourself"
+      subtitle="Scan or email the link to yourself"
       state={state}
     >
       <div className="flex flex-col gap-4">
@@ -190,7 +165,7 @@ export function ShareSection({ state }: Props) {
         <div
           className={`w-[96%] mx-auto grid gap-4 ${
             isKiosk
-              ? "max-w-[1400px] grid-cols-1 md:grid-cols-3"
+              ? "max-w-[1400px] grid-cols-1 md:grid-cols-2"
               : "max-w-[760px] grid-cols-1"
           }`}
         >
@@ -220,51 +195,6 @@ export function ShareSection({ state }: Props) {
                 <Loader2 size={16} className="animate-spin" /> Generating link...
               </div>
             )}
-          </div>
-
-          <div className="rounded-2xl p-4 glass">
-            <div className="flex items-center gap-2 mb-3">
-              <MessageSquare size={18} className="text-[#22d3ee]" />
-              <h3 className="font-semibold">Text me the link</h3>
-            </div>
-            <Field label="Phone number">
-              <TextInput
-                inputMode="tel"
-                placeholder="+1 555 123 4567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                disabled={smsState === "sending" || smsState === "sent"}
-              />
-            </Field>
-            {smsError && <p className="mt-2 text-xs text-red-300">{smsError}</p>}
-            <div className="mt-3">
-              <PrimaryButton
-                onClick={handleSendSms}
-                disabled={
-                  phoneDigits < 7 ||
-                  smsState === "sending" ||
-                  smsState === "sent" ||
-                  !shareUrl
-                }
-                className="w-full"
-              >
-                {smsState === "sending" && (
-                  <>
-                    <Loader2 size={18} className="animate-spin" /> Sending...
-                  </>
-                )}
-                {smsState === "sent" && (
-                  <>
-                    <Check size={18} /> Sent
-                  </>
-                )}
-                {(smsState === "idle" || smsState === "error") && (
-                  <>
-                    <MessageSquare size={18} /> Send text
-                  </>
-                )}
-              </PrimaryButton>
-            </div>
           </div>
 
           <div className="rounded-2xl p-4 glass">

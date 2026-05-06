@@ -2,19 +2,18 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, Keyboard, X, Check, Pencil } from "lucide-react";
+import { Camera, X, Check } from "lucide-react";
 import clsx from "clsx";
 import { useWizard } from "@/lib/store";
 import type { CardDetails } from "@/lib/types";
 import { withFallback, hasRealDetails } from "@/lib/fake-data";
 import { buildVcard } from "@/lib/vcard";
 import { SectionFrame } from "./section-frame";
-import { PrimaryButton, GhostButton } from "../ui";
+import { GhostButton } from "../ui";
 import { TemplateCard } from "../templates/card-templates";
 import { UnifiedScanner } from "../scanners/unified-scanner";
-import { DetailsForm } from "../forms/details-form";
 
-type ViewMode = "idle" | "scanning" | "form";
+type ViewMode = "edit" | "scanning";
 
 type Props = {
   state: "idle" | "active" | "done";
@@ -28,20 +27,16 @@ export function PersonalizeSection({ state }: Props) {
   const replaceDetails = useWizard((s) => s.replaceDetails);
   const displayMode = useWizard((s) => s.mode);
 
-  const [view, setView] = useState<ViewMode>("idle");
+  const [view, setView] = useState<ViewMode>("edit");
 
   const isReal = hasRealDetails(details);
   const displayDetails = withFallback(details);
   const qrValue = buildVcard(displayDetails, sessionId);
   const isKiosk = displayMode === "kiosk";
 
-  const idleCardWrapper = isKiosk
+  const cardWrapper = isKiosk
     ? "w-[96%] max-w-[1400px]"
     : "w-[92%] max-w-[760px]";
-  const splitCardMaxWidth = isKiosk ? "max-w-[700px]" : "max-w-[520px]";
-  const splitGrid = isKiosk
-    ? "grid-cols-1 md:grid-cols-2"
-    : "grid-cols-1";
 
   const handleScanResult = (partial: Partial<CardDetails>) => {
     replaceDetails({
@@ -52,7 +47,7 @@ export function PersonalizeSection({ state }: Props) {
       email: partial.email ?? details.email ?? "",
       website: partial.website ?? details.website ?? "",
     });
-    setView("form");
+    setView("edit");
   };
 
   return (
@@ -63,21 +58,21 @@ export function PersonalizeSection({ state }: Props) {
         view === "scanning"
           ? "Show a business card or QR code to the camera"
           : isReal
-            ? "Looking good — review and continue"
-            : "Scan a card, scan a QR code, or type your details"
+            ? "Looking good — review, tweak, and continue"
+            : "Tap any field to type — or scan a card to fill it in for you"
       }
       state={state}
     >
       <AnimatePresence mode="wait">
-        {view === "idle" && (
+        {view === "edit" && (
           <motion.div
-            key="idle"
+            key="edit"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4"
           >
-            <div className={clsx(idleCardWrapper, "flex items-center justify-center")}>
+            <div className={clsx(cardWrapper, "flex items-center justify-center")}>
               <motion.div
                 layout
                 initial={{ opacity: 0, y: 10 }}
@@ -85,29 +80,23 @@ export function PersonalizeSection({ state }: Props) {
                 transition={{ type: "spring", stiffness: 220, damping: 24 }}
                 className="relative w-full"
               >
+                {/* Inline-editable card. Each text field becomes a styled
+                    input that writes through to the wizard store. The
+                    photo and QR remain read-only — those are set in
+                    other steps. */}
                 <TemplateCard
                   template="aurora"
-                  details={displayDetails}
+                  details={details}
                   photoDataUrl={photo}
                   qrValue={qrValue}
+                  onEdit={setDetails}
                 />
               </motion.div>
             </div>
 
             <div className="flex-none flex items-center justify-center gap-3 flex-wrap">
-              <PrimaryButton onClick={() => setView("scanning")} className="px-8">
-                <Camera size={20} /> {isReal ? "Rescan" : "Scan card or QR code"}
-              </PrimaryButton>
-              <GhostButton onClick={() => setView("form")}>
-                {isReal ? (
-                  <>
-                    <Pencil size={16} /> Edit manually
-                  </>
-                ) : (
-                  <>
-                    <Keyboard size={16} /> Type manually
-                  </>
-                )}
+              <GhostButton onClick={() => setView("scanning")}>
+                <Camera size={16} /> {isReal ? "Rescan card" : "Scan a paper card"}
               </GhostButton>
               {isReal && (
                 <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 bg-emerald-400/10 border border-emerald-400/30 text-emerald-300 text-xs">
@@ -126,7 +115,7 @@ export function PersonalizeSection({ state }: Props) {
             exit={{ opacity: 0 }}
             className="flex-1 min-h-0 flex flex-col items-center justify-center gap-4"
           >
-            <div className={clsx(idleCardWrapper, "flex items-center justify-center")}>
+            <div className={clsx(cardWrapper, "flex items-center justify-center")}>
               <div className="relative w-full">
                 <TemplateCard
                   template="aurora"
@@ -138,9 +127,7 @@ export function PersonalizeSection({ state }: Props) {
                 {/* Camera blooms open from where the contact info usually
                     sits — Aurora's info column is between 30% and 70% of
                     the card width, so the camera overlays it with a touch
-                    of overhang into the photo and QR columns. Spring-
-                    scaled in so it feels like the middle "opens up" on
-                    tap, not a panel sliding in. */}
+                    of overhang into the photo and QR columns. */}
                 <motion.div
                   initial={{ scale: 0.45, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
@@ -155,42 +142,8 @@ export function PersonalizeSection({ state }: Props) {
             </div>
 
             <div className="flex-none flex items-center justify-center">
-              <GhostButton onClick={() => setView("idle")}>
+              <GhostButton onClick={() => setView("edit")}>
                 <X size={16} /> Cancel scan
-              </GhostButton>
-            </div>
-          </motion.div>
-        )}
-
-        {view === "form" && (
-          <motion.div
-            key="form"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex-1 min-h-0 flex flex-col gap-3"
-          >
-            <div className={clsx("flex-1 min-h-0 grid gap-4 items-stretch", splitGrid)}>
-              <div className="flex items-center justify-center min-w-0">
-                <div className={clsx("w-full", splitCardMaxWidth)}>
-                  <TemplateCard
-                    template="aurora"
-                    details={displayDetails}
-                    photoDataUrl={photo}
-                    qrValue={qrValue}
-                  />
-                </div>
-              </div>
-              <div className="min-w-0 overflow-auto">
-                <DetailsForm value={details} onChange={setDetails} />
-              </div>
-            </div>
-            <div className="flex-none flex items-center justify-between">
-              <GhostButton onClick={() => setView("idle")}>
-                <X size={16} /> Done editing
-              </GhostButton>
-              <GhostButton onClick={() => setView("scanning")}>
-                <Camera size={14} /> Rescan
               </GhostButton>
             </div>
           </motion.div>
