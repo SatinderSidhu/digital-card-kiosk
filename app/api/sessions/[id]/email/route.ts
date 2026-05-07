@@ -86,61 +86,106 @@ export async function POST(req: Request, { params }: Props) {
     process.env.NEXT_PUBLIC_SITE_URL ?? new URL(req.url).origin;
   const cardUrl = `${origin.replace(/\/$/, "")}/c/${id}`;
   const senderName = session.details.fullName || "your digital card";
-  const subject = `Your digital card from ${senderName}`;
+  const subject = `Your digital card${senderName !== "your digital card" ? `, ${senderName}` : ""}`;
   const vcard = buildVcard(session.details, id);
   const vcardFilename = `${safeFilename(session.details.fullName)}.vcf`;
 
   const d = session.details;
-  const html = `<!doctype html><html><body style="margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif;background:#f5f7fb;color:#1a1a2e;">
-  <div style="max-width:540px;margin:0 auto;padding:32px 24px;">
-    <h1 style="font-size:22px;font-weight:600;margin:0 0 24px;color:#1a1a2e;">Your digital card</h1>
-    <div style="background:linear-gradient(135deg,#1e1b4b,#312e81,#0c4a6e);border-radius:16px;padding:28px;color:white;">
-      <p style="font-size:26px;font-weight:700;margin:0 0 4px;line-height:1.1;">${escapeHtml(d.fullName || "Your Name")}</p>
-      <p style="font-size:16px;opacity:0.92;margin:0 0 4px;">${escapeHtml(d.title || "")}</p>
-      <p style="font-size:14px;opacity:0.7;margin:0 0 16px;">${escapeHtml(d.company || "")}</p>
-      <hr style="border:0;border-top:1px solid rgba(255,255,255,0.25);margin:0 0 16px;">
-      ${d.phone ? `<p style="margin:6px 0;font-size:14px;">📞 ${escapeHtml(d.phone)}</p>` : ""}
-      ${d.email ? `<p style="margin:6px 0;font-size:14px;">✉ ${escapeHtml(d.email)}</p>` : ""}
-      ${d.website ? `<p style="margin:6px 0;font-size:14px;">🌐 ${escapeHtml(d.website)}</p>` : ""}
-    </div>
-    <div style="text-align:center;margin:28px 0 16px;">
-      <a href="${cardUrl}" style="display:inline-block;background:#7c5cff;color:white;padding:12px 32px;border-radius:9999px;text-decoration:none;font-weight:600;">View on web</a>
-    </div>
-    <p style="font-size:13px;color:#64748b;text-align:center;margin:8px 0 0;">
-      The .vcf file attached opens directly in your phone&apos;s Contacts app.
-    </p>
-  </div>
-</body></html>`;
+  const firstName = (d.fullName || "").trim().split(/\s+/)[0];
+  const greeting = firstName ? `Hi ${firstName},` : "Hello,";
+  // The cid lets the inline-attached PNG render in the body via
+  // <img src="cid:...">. Most clients (Gmail, Outlook, Apple Mail) also
+  // list the cid'd image in the attachments tray.
+  const cardImageCid = `digital-card-${id}`;
+
+  const html = `<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f5f7fb;color:#0f172a;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px -12px rgba(15,23,42,0.12);">
+          <tr>
+            <td style="padding:32px 32px 12px;">
+              <h1 style="margin:0 0 10px;font-size:22px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;">${escapeHtml(greeting)}</h1>
+              <p style="margin:0;font-size:15px;line-height:1.55;color:#475569;">
+                Here's your digital card. Open it on the web for the QR and live links, or save the <strong>.vcf</strong> attachment to add yourself to anyone's Contacts in one tap. The card image is also attached so you can share or print it.
+              </p>
+            </td>
+          </tr>
+${
+  cardImageBase64
+    ? `          <tr>
+            <td align="center" style="padding:20px 32px 8px;">
+              <img src="cid:${cardImageCid}" alt="${escapeHtml(d.fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
+            </td>
+          </tr>`
+    : `          <tr>
+            <td style="padding:16px 32px 8px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:linear-gradient(135deg,#1e1b4b,#312e81 50%,#0c4a6e);border-radius:14px;color:#ffffff;">
+                <tr><td style="padding:24px 28px;color:#ffffff;">
+                  <p style="margin:0 0 4px;font-size:24px;font-weight:700;line-height:1.1;color:#ffffff;">${escapeHtml(d.fullName || "Your Name")}</p>
+                  <p style="margin:0 0 4px;font-size:15px;color:rgba(255,255,255,0.92);">${escapeHtml(d.title || "")}</p>
+                  <p style="margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.7);">${escapeHtml(d.company || "")}</p>
+                  <hr style="border:0;border-top:1px solid rgba(255,255,255,0.25);margin:0 0 14px;">
+                  ${d.phone ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">📞 ${escapeHtml(d.phone)}</p>` : ""}
+                  ${d.email ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">✉ ${escapeHtml(d.email)}</p>` : ""}
+                  ${d.website ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">🌐 ${escapeHtml(d.website)}</p>` : ""}
+                </td></tr>
+              </table>
+            </td>
+          </tr>`
+}
+          <tr>
+            <td align="center" style="padding:20px 32px 8px;">
+              <a href="${escapeHtml(cardUrl)}" style="display:inline-block;background:#7c5cff;background-image:linear-gradient(135deg,#7c5cff 0%,#22d3ee 100%);color:#ffffff;padding:14px 36px;border-radius:9999px;text-decoration:none;font-weight:600;font-size:15px;">View on web</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px 28px;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
+                ${cardImageBase64 ? "A <strong>.png</strong> of the card and a <strong>.vcf</strong> contact file are attached." : "The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app."}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 
   const text = [
-    `Your digital card from ${senderName}`,
+    greeting,
     "",
-    d.title ? d.title : "",
-    d.company ? d.company : "",
-    "",
-    d.phone ? `Phone: ${d.phone}` : "",
-    d.email ? `Email: ${d.email}` : "",
-    d.website ? `Web:   ${d.website}` : "",
+    "Here's your digital card. Open it on the web for the QR and live links,",
+    "or save the .vcf attachment to add yourself to anyone's Contacts.",
     "",
     `View on web: ${cardUrl}`,
     "",
-    "(The .vcf attachment will open in your Contacts app.)",
+    cardImageBase64
+      ? "Attached: card.png (image) and .vcf (contact)."
+      : "Attached: .vcf (contact).",
   ]
     .filter(Boolean)
     .join("\n");
 
   const outerBoundary = `----digital-card-outer-${Math.random().toString(36).slice(2)}`;
   const innerBoundary = `----digital-card-inner-${Math.random().toString(36).slice(2)}`;
+  const relatedBoundary = `----digital-card-related-${Math.random().toString(36).slice(2)}`;
   const cardImageFilename = `${safeFilename(session.details.fullName)}-card.png`;
 
-  const parts: string[] = [
-    `From: ${fromEmail}`,
-    `To: ${email}`,
-    `Subject: ${subject}`,
-    `MIME-Version: 1.0`,
-    `Content-Type: multipart/mixed; boundary="${outerBoundary}"`,
-    ``,
-    `--${outerBoundary}`,
+  // MIME shape (with PNG):
+  //   multipart/mixed
+  //   ├── multipart/related
+  //   │   ├── multipart/alternative (text + html)
+  //   │   └── image/png            (inline, Content-ID — referenced by html)
+  //   ├── text/vcard               (attachment)
+  //   └── image/png                (attachment — explicit second copy so the
+  //                                 client lists it in the attachments tray)
+  // Without PNG: just outer/mixed → alternative + vCard.
+  const altBlock = [
     `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
     ``,
     `--${innerBoundary}`,
@@ -156,7 +201,41 @@ export async function POST(req: Request, { params }: Props) {
     html,
     ``,
     `--${innerBoundary}--`,
+  ].join("\r\n");
+
+  const parts: string[] = [
+    `From: ${fromEmail}`,
+    `To: ${email}`,
+    `Subject: ${subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/mixed; boundary="${outerBoundary}"`,
     ``,
+    `--${outerBoundary}`,
+  ];
+
+  if (cardImageBase64) {
+    parts.push(
+      `Content-Type: multipart/related; boundary="${relatedBoundary}"`,
+      ``,
+      `--${relatedBoundary}`,
+      altBlock,
+      ``,
+      `--${relatedBoundary}`,
+      `Content-Type: image/png; name="${cardImageFilename}"`,
+      `Content-Disposition: inline; filename="${cardImageFilename}"`,
+      `Content-ID: <${cardImageCid}>`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      wrapBase64(cardImageBase64),
+      ``,
+      `--${relatedBoundary}--`,
+      ``,
+    );
+  } else {
+    parts.push(altBlock, ``);
+  }
+
+  parts.push(
     `--${outerBoundary}`,
     `Content-Type: text/vcard; charset=UTF-8; name="${vcardFilename}"`,
     `Content-Disposition: attachment; filename="${vcardFilename}"`,
@@ -164,7 +243,7 @@ export async function POST(req: Request, { params }: Props) {
     ``,
     vcard,
     ``,
-  ];
+  );
 
   if (cardImageBase64) {
     parts.push(
