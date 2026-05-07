@@ -12,7 +12,7 @@ import type { Orientation, TemplateId } from "@/lib/types";
 // kind in the registry. The user can still fine-tune in step 3.
 const DEFAULT_TEMPLATE_FOR: Record<Orientation, TemplateId> = {
   landscape: "aurora",
-  portrait: "neon",
+  portrait: "noir",
 };
 
 const LANDSCAPE_TEMPLATES: TemplateId[] = ["aurora", "mono", "sunset"];
