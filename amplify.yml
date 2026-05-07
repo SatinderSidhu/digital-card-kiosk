@@ -14,9 +14,12 @@ applications:
             # to Lambda. Add new vars to this list as new routes need them.
             - echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env.production
             - echo "DYNAMODB_TABLE=$DYNAMODB_TABLE" >> .env.production
+            - echo "DYNAMODB_REVIEWS_TABLE=$DYNAMODB_REVIEWS_TABLE" >> .env.production
             - echo "S3_PHOTO_BUCKET=$S3_PHOTO_BUCKET" >> .env.production
+            - echo "S3_REVIEW_BUCKET=$S3_REVIEW_BUCKET" >> .env.production
             - echo "SES_FROM_EMAIL=$SES_FROM_EMAIL" >> .env.production
             - echo "NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL" >> .env.production
+            - echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> .env.production
             - npm run build
       artifacts:
         baseDirectory: .next
