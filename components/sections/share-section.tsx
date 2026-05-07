@@ -39,13 +39,20 @@ export function ShareSection({ state }: Props) {
   const [email, setEmail] = useState(details.email);
   const [emailState, setEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [autoSentTo, setAutoSentTo] = useState<string | null>(null);
+  const [cardImage, setCardImage] = useState<string | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const qrValue = buildVcard(details, sessionId);
 
+  const cardCaptureRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guards the one-shot auto-send so the effect can re-run safely
+  // (re-renders, dev-mode StrictMode double-invokes, etc.) without firing
+  // the email more than once.
+  const autoSentRef = useRef(false);
 
   // Cleanup celebration timers on unmount.
   useEffect(
@@ -100,24 +107,107 @@ export function ShareSection({ state }: Props) {
     resetTimerRef.current = setTimeout(() => reset(), AUTO_RESET_MS);
   }, [reset, isKiosk]);
 
-  const handleSendEmail = async () => {
-    if (!template) return;
-    setEmailError(null);
-    setEmailState("sending");
-    try {
-      await mockSendEmail(email.trim(), {
-        sessionId,
-        details,
-        template,
-        photoDataUrl: photo,
-      });
-      setEmailState("sent");
-      triggerCelebration();
-    } catch (e) {
-      setEmailState("error");
-      setEmailError(e instanceof Error ? e.message : "Could not send");
-    }
+  const sendEmailTo = useCallback(
+    async (to: string, image: string | null) => {
+      if (!template) return;
+      const trimmed = to.trim();
+      if (!trimmed.includes("@")) {
+        setEmailError("Enter a valid email address.");
+        setEmailState("error");
+        return;
+      }
+      setEmailError(null);
+      setEmailState("sending");
+      try {
+        await mockSendEmail(
+          trimmed,
+          {
+            sessionId,
+            details,
+            template,
+            photoDataUrl: photo,
+          },
+          image,
+        );
+        setEmailState("sent");
+        triggerCelebration();
+      } catch (e) {
+        setEmailState("error");
+        setEmailError(e instanceof Error ? e.message : "Could not send");
+      }
+    },
+    [template, sessionId, details, photo, triggerCelebration],
+  );
+
+  const handleSendEmail = () => {
+    void sendEmailTo(email, cardImage);
   };
+
+  // Snapshot the rendered card as a PNG once it's mounted. Done client-side
+  // because the live DOM has the photo, gradients, and QR already laid out
+  // — re-rendering server-side via Satori/OG-image would mean rebuilding
+  // every template in a CSS subset.
+  useEffect(() => {
+    if (!template) return;
+    if (!cardCaptureRef.current) return;
+    if (cardImage) return;
+
+    let cancelled = false;
+    // Give framer-motion's spring transition time to settle so the snapshot
+    // doesn't capture a mid-animation frame.
+    const timer = setTimeout(async () => {
+      try {
+        const html2canvas = (await import("html2canvas")).default;
+        if (cancelled || !cardCaptureRef.current) return;
+        const canvas = await html2canvas(cardCaptureRef.current, {
+          backgroundColor: null,
+          scale: 1.5,
+          useCORS: true,
+          logging: false,
+        });
+        if (cancelled) return;
+        setCardImage(canvas.toDataURL("image/png"));
+      } catch (err) {
+        // Capture is best-effort — if it fails, the email still goes out
+        // with the link + vCard. Log and move on.
+        console.warn("[card-capture] failed:", err);
+      }
+    }, 700);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [template, cardImage]);
+
+  // Auto-send the card to the email captured in step 2 the moment the
+  // share link AND the card snapshot are ready. The kiosk audience
+  // expects to walk away with the email already in their inbox.
+  // If the snapshot is still pending after a few seconds we send anyway
+  // (the email keeps the link + vCard, just without the PNG).
+  useEffect(() => {
+    if (autoSentRef.current) return;
+    if (!shareUrl) return;
+    const target = details.email?.trim();
+    if (!target || !target.includes("@")) return;
+
+    const fire = (image: string | null) => {
+      if (autoSentRef.current) return;
+      autoSentRef.current = true;
+      void (async () => {
+        setAutoSentTo(target);
+        await sendEmailTo(target, image);
+      })();
+    };
+
+    if (cardImage) {
+      fire(cardImage);
+      return;
+    }
+    // Wait up to 4s for the snapshot, then send without it.
+    const timer = setTimeout(() => fire(null), 4000);
+    return () => clearTimeout(timer);
+  }, [shareUrl, details.email, cardImage, sendEmailTo]);
 
   if (!template) {
     return (
@@ -154,12 +244,14 @@ export function ShareSection({ state }: Props) {
                 : isKiosk ? 1400 : 760,
           }}
         >
-          <TemplateCard
-            template={template}
-            details={details}
-            photoDataUrl={photo}
-            qrValue={qrValue}
-          />
+          <div ref={cardCaptureRef}>
+            <TemplateCard
+              template={template}
+              details={details}
+              photoDataUrl={photo}
+              qrValue={qrValue}
+            />
+          </div>
         </motion.div>
 
         <div
@@ -200,26 +292,69 @@ export function ShareSection({ state }: Props) {
           <div className="rounded-2xl p-4 glass">
             <div className="flex items-center gap-2 mb-3">
               <Mail size={18} className="text-[#a78bfa]" />
-              <h3 className="font-semibold">Email me</h3>
+              <h3 className="font-semibold">
+                {autoSentTo && emailState === "sent"
+                  ? "Sent to your inbox"
+                  : autoSentTo
+                    ? "Sending to your inbox"
+                    : "Email me"}
+              </h3>
             </div>
-            <Field label="Email address">
+
+            {autoSentTo && (
+              <div
+                className={`flex items-start gap-2 rounded-lg px-3 py-2 mb-3 text-xs ${
+                  emailState === "sent"
+                    ? "bg-emerald-400/10 border border-emerald-400/30 text-emerald-200"
+                    : emailState === "error"
+                      ? "bg-red-500/10 border border-red-500/30 text-red-200"
+                      : "bg-white/5 border border-white/10 text-white/65"
+                }`}
+              >
+                {emailState === "sending" && (
+                  <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
+                )}
+                {emailState === "sent" && (
+                  <Check size={14} className="mt-0.5 shrink-0" />
+                )}
+                <span className="leading-snug break-all">
+                  {emailState === "sent"
+                    ? `Your card and link were sent to ${autoSentTo}.`
+                    : emailState === "error"
+                      ? `Couldn’t send to ${autoSentTo} — try the form below.`
+                      : `Sending your card and link to ${autoSentTo}…`}
+                </span>
+              </div>
+            )}
+
+            <Field label={autoSentTo ? "Send to another address" : "Email address"}>
               <TextInput
                 inputMode="email"
                 placeholder="you@company.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={emailState === "sending" || emailState === "sent"}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (emailState === "sent") setEmailState("idle");
+                  if (emailError) setEmailError(null);
+                }}
+                disabled={emailState === "sending"}
               />
             </Field>
-            {emailError && <p className="mt-2 text-xs text-red-300">{emailError}</p>}
+            {emailError && !autoSentTo && (
+              <p className="mt-2 text-xs text-red-300">{emailError}</p>
+            )}
             <div className="mt-3">
               <PrimaryButton
                 onClick={handleSendEmail}
                 disabled={
                   !email.includes("@") ||
                   emailState === "sending" ||
-                  emailState === "sent" ||
-                  !shareUrl
+                  !shareUrl ||
+                  // After auto-send, only re-enable once they edit the address
+                  // to a different one — avoids accidental double-sends.
+                  (autoSentTo !== null &&
+                    email.trim().toLowerCase() === autoSentTo.toLowerCase() &&
+                    emailState === "sent")
                 }
                 className="w-full"
               >
@@ -228,14 +363,17 @@ export function ShareSection({ state }: Props) {
                     <Loader2 size={18} className="animate-spin" /> Sending...
                   </>
                 )}
-                {emailState === "sent" && (
+                {emailState === "sent" && !autoSentTo && (
                   <>
                     <Check size={18} /> Sent
                   </>
                 )}
-                {(emailState === "idle" || emailState === "error") && (
+                {(emailState === "idle" ||
+                  emailState === "error" ||
+                  (emailState === "sent" && autoSentTo)) && (
                   <>
-                    <Mail size={18} /> Send email
+                    <Mail size={18} />{" "}
+                    {autoSentTo ? "Send to this address too" : "Send email"}
                   </>
                 )}
               </PrimaryButton>

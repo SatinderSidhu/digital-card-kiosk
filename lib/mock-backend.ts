@@ -31,13 +31,16 @@ export async function mockCreateSession(
   return postJSON<{ url: string }>("/api/sessions", payload);
 }
 
-/** Sends the card link + vCard attachment to the given email via AWS SES. */
+/** Sends the card link + vCard attachment to the given email via AWS SES.
+ *  Optionally attaches a PNG snapshot of the rendered card. */
 export async function mockSendEmail(
   email: string,
   payload: SharePayload,
+  cardImageDataUrl?: string | null,
 ): Promise<{ ok: true }> {
   return postJSON<{ ok: true }>(`/api/sessions/${payload.sessionId}/email`, {
     email,
+    cardImageDataUrl: cardImageDataUrl ?? null,
   });
 }
 

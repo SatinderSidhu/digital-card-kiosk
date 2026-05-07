@@ -7,7 +7,17 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 type Props = { params: Promise<{ id: string }> };
-type Body = { email?: string };
+type Body = {
+  email?: string;
+  /** Optional base64 PNG data URL — a snapshot of the rendered card. */
+  cardImageDataUrl?: string | null;
+};
+
+/** Wrap a base64 string at 76 chars per RFC 2045 so picky MTAs don't
+ *  reject the message for over-long lines. */
+function wrapBase64(s: string): string {
+  return s.match(/.{1,76}/g)?.join("\r\n") ?? s;
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -53,6 +63,15 @@ export async function POST(req: Request, { params }: Props) {
       { error: "Enter a valid email address." },
       { status: 400 },
     );
+  }
+
+  // Optional PNG snapshot. Reject anything that's not a real image data
+  // URL so a malicious payload can't piggy-back arbitrary bytes onto an
+  // email we're sending from a verified sender.
+  let cardImageBase64: string | null = null;
+  if (body.cardImageDataUrl && typeof body.cardImageDataUrl === "string") {
+    const m = body.cardImageDataUrl.match(/^data:image\/png;base64,([\s\S]+)$/);
+    if (m) cardImageBase64 = m[1];
   }
 
   const session = await getSession(id);
@@ -112,8 +131,9 @@ export async function POST(req: Request, { params }: Props) {
 
   const outerBoundary = `----digital-card-outer-${Math.random().toString(36).slice(2)}`;
   const innerBoundary = `----digital-card-inner-${Math.random().toString(36).slice(2)}`;
+  const cardImageFilename = `${safeFilename(session.details.fullName)}-card.png`;
 
-  const rawMessage = [
+  const parts: string[] = [
     `From: ${fromEmail}`,
     `To: ${email}`,
     `Subject: ${subject}`,
@@ -144,8 +164,22 @@ export async function POST(req: Request, { params }: Props) {
     ``,
     vcard,
     ``,
-    `--${outerBoundary}--`,
-  ].join("\r\n");
+  ];
+
+  if (cardImageBase64) {
+    parts.push(
+      `--${outerBoundary}`,
+      `Content-Type: image/png; name="${cardImageFilename}"`,
+      `Content-Disposition: attachment; filename="${cardImageFilename}"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      wrapBase64(cardImageBase64),
+      ``,
+    );
+  }
+
+  parts.push(`--${outerBoundary}--`);
+  const rawMessage = parts.join("\r\n");
 
   try {
     const region = process.env.AWS_REGION ?? "us-east-1";
