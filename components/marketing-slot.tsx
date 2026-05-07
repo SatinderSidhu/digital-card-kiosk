@@ -7,10 +7,10 @@ type Props = {
 };
 
 // Bundled with the app under /public so the kiosk doesn't depend on a
-// network round-trip to S3 every time it boots. Update the file in place
-// (overwrite public/DigitalCardPromo.mp4) to swap the asset; the URL stays
-// the same.
-const PROMO_VIDEO_URL = "/DigitalCardPromo.mp4";
+// network round-trip to S3 every time it boots. Bump the ?v= each time
+// the file is overwritten so browsers / CloudFront drop the cached copy
+// instead of serving the previous version.
+const PROMO_VIDEO_URL = "/DigitalCardPromo.mp4?v=2";
 
 /**
  * Promotional video — bottom half of the kiosk display. Plays muted in an
