@@ -159,8 +159,13 @@ export default function Page() {
           </AnimatePresence>
 
           {/* In kiosk mode, step 1 has its own inline buttons on the card,
-              so we hide StepNav. Compact mode always uses StepNav. */}
-          {(!isKiosk || step > 0) && (
+              so we hide StepNav. Step 3 (Share) is self-contained — it
+              renders its own Change style / Start over / Clear my session
+              actions, so we hide StepNav there entirely.
+              Step 2 (Build picker) auto-advances on tap, so we still want
+              the Back button but the "Share it" Continue is hidden — see
+              StepNav itself. */}
+          {(!isKiosk || step > 0) && step !== 3 && (
             <StepNav
               step={step}
               canContinue={canContinue}
@@ -191,7 +196,12 @@ function StepNav({
   onReset: () => void;
 }) {
   const nextLabel =
-    step === 0 ? "Continue" : step === 1 ? "Pick a style" : step === 2 ? "Share it" : "";
+    step === 0 ? "Continue" : step === 1 ? "Pick a style" : "";
+
+  // Step 2 auto-advances when a template is tapped, so its Continue button
+  // would never get pressed. Hide it; keep Back so the customer can return
+  // to Personalize if they need to fix something.
+  const showNext = step < 2;
 
   return (
     <div className="flex-none mt-3 pt-3 border-t border-white/10 flex items-center justify-between gap-3">
@@ -203,10 +213,12 @@ function StepNav({
         <span className="h-10" />
       )}
 
-      {step < 3 ? (
+      {showNext ? (
         <PrimaryButton onClick={onNext} disabled={!canContinue}>
           {nextLabel} <ArrowRight size={18} />
         </PrimaryButton>
+      ) : step === 2 ? (
+        <span className="h-10" />
       ) : (
         <GhostButton onClick={onReset}>
           <RotateCcw size={14} /> Start over

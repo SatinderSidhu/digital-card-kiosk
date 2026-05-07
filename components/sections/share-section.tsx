@@ -10,6 +10,8 @@ import {
   Smartphone,
   Sparkles,
   RotateCcw,
+  Palette,
+  Trash2,
 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { TEMPLATE_ORIENTATION } from "@/lib/types";
@@ -31,8 +33,42 @@ export function ShareSection({ state }: Props) {
   const template = useWizard((s) => s.template);
   const sessionId = useWizard((s) => s.sessionId);
   const reset = useWizard((s) => s.reset);
+  const back = useWizard((s) => s.back);
+  const setTemplate = useWizard((s) => s.setTemplate);
   const displayMode = useWizard((s) => s.mode);
   const isKiosk = displayMode === "kiosk";
+
+  const handleChangeStyle = () => {
+    // Clear the selection so step 3 lands on the picker (its "choose" phase
+    // only renders when template is null), then step back from share.
+    setTemplate(null);
+    back();
+  };
+
+  const handleClearSession = () => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Clear your session and walk away? This wipes your photo, details, and card from this kiosk.",
+      )
+    ) {
+      return;
+    }
+    reset();
+    if (typeof window !== "undefined") {
+      try {
+        // sessionStorage is per-tab and never holds anything we want to keep
+        // across customer sessions on a kiosk — clearing it on logout drops
+        // the chunk-reload guard plus any future ephemeral keys we add.
+        window.sessionStorage.clear();
+      } catch {
+        // sessionStorage may be blocked in privacy mode — nothing to do.
+      }
+      // Hard reload — guarantees no stale React state, mounted modals, or
+      // in-flight fetches survive the next customer's first interaction.
+      window.location.reload();
+    }
+  };
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareUrlError, setShareUrlError] = useState<string | null>(null);
@@ -153,8 +189,9 @@ export function ShareSection({ state }: Props) {
     if (cardImage) return;
 
     let cancelled = false;
-    // Give framer-motion's spring transition time to settle so the snapshot
-    // doesn't capture a mid-animation frame.
+    // Give framer-motion's spring transition + the QR's deferred SVG
+    // render time to settle. ~1s feels generous without making the
+    // auto-send wait too long.
     const timer = setTimeout(async () => {
       try {
         const html2canvas = (await import("html2canvas")).default;
@@ -172,7 +209,7 @@ export function ShareSection({ state }: Props) {
         // with the link + vCard. Log and move on.
         console.warn("[card-capture] failed:", err);
       }
-    }, 700);
+    }, 1100);
 
     return () => {
       cancelled = true;
@@ -204,8 +241,11 @@ export function ShareSection({ state }: Props) {
       fire(cardImage);
       return;
     }
-    // Wait up to 4s for the snapshot, then send without it.
-    const timer = setTimeout(() => fire(null), 4000);
+    // Wait up to 7s for the snapshot, then send without it. Capture itself
+    // typically takes ~1.5–2.5s after the 1.1s mount delay, so this gives
+    // enough headroom on slower devices without making the user wait
+    // forever if the library throws.
+    const timer = setTimeout(() => fire(null), 7000);
     return () => clearTimeout(timer);
   }, [shareUrl, details.email, cardImage, sendEmailTo]);
 
@@ -382,16 +422,24 @@ export function ShareSection({ state }: Props) {
         </div>
 
         <div
-          className={`w-[96%] mx-auto flex items-center justify-between gap-2 ${
+          className={`w-[96%] mx-auto flex flex-wrap items-center justify-between gap-2 ${
             isKiosk ? "max-w-[1400px]" : "max-w-[760px]"
           }`}
         >
-          <GhostButton onClick={reset}>
-            <RotateCcw size={14} /> Start over
+          <GhostButton onClick={handleChangeStyle}>
+            <Palette size={14} /> Change style
           </GhostButton>
-          {isKiosk && countdown !== null && (
-            <span className="text-xs text-white/50">Restarting in {countdown}s</span>
-          )}
+          <div className="flex items-center gap-2">
+            {isKiosk && countdown !== null && (
+              <span className="text-xs text-white/50 mr-2">Restarting in {countdown}s</span>
+            )}
+            <GhostButton onClick={reset}>
+              <RotateCcw size={14} /> Start over
+            </GhostButton>
+            <GhostButton onClick={handleClearSession}>
+              <Trash2 size={14} /> Clear my session
+            </GhostButton>
+          </div>
         </div>
       </div>
 

@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { PAGE_TEMPLATES, TEMPLATE_ORIENTATION, type TemplateId } from "@/lib/types";
 import { buildVcard } from "@/lib/vcard";
 import { SectionFrame } from "./section-frame";
 import { TemplateCard, TEMPLATES } from "../templates/card-templates";
 
-type Phase = "choose" | "building" | "done";
+type Phase = "choose" | "building";
 const BUILD_MS = 1600;
 
 type Props = {
@@ -22,10 +22,16 @@ export function BuildSection({ state }: Props) {
   const template = useWizard((s) => s.template);
   const setTemplate = useWizard((s) => s.setTemplate);
   const sessionId = useWizard((s) => s.sessionId);
+  const next = useWizard((s) => s.next);
   const displayMode = useWizard((s) => s.mode);
   const isKiosk = displayMode === "kiosk";
 
-  const [phase, setPhase] = useState<Phase>(template ? "done" : "choose");
+  // Step 3 used to have a "done" phase that showed the card with a Change
+  // style link and required the customer to manually advance to step 4.
+  // Steps 3 and 4 are now merged from the customer's perspective: the build
+  // animation runs briefly, then we auto-advance straight to the share
+  // screen which renders the card + sharing options + Change style action.
+  const [phase, setPhase] = useState<Phase>("choose");
   const buildTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cleanup timer if the component unmounts mid-build.
@@ -51,20 +57,17 @@ export function BuildSection({ state }: Props) {
     setTemplate(id);
     setPhase("building");
     if (buildTimerRef.current) clearTimeout(buildTimerRef.current);
-    buildTimerRef.current = setTimeout(() => setPhase("done"), BUILD_MS);
-  };
-
-  const handleReset = () => {
-    if (buildTimerRef.current) {
-      clearTimeout(buildTimerRef.current);
-      buildTimerRef.current = null;
-    }
-    setTemplate(null);
-    setPhase("choose");
+    buildTimerRef.current = setTimeout(() => {
+      // Auto-advance to the merged share screen — the customer never sees a
+      // separate "card is ready, click Continue" screen anymore.
+      next();
+    }, BUILD_MS);
   };
 
   const chosenMeta = template ? meta(template) : undefined;
   const chosenOrientation = chosenMeta?.orientation ?? "landscape";
+  // Card-during-build sizing — only used in the "building" phase since
+  // "done" no longer renders here (we auto-advance to ShareSection).
   const chosenMaxW = isKiosk
     ? chosenOrientation === "portrait" ? 360 : 640
     : chosenOrientation === "portrait" ? 240 : 460;
@@ -85,9 +88,7 @@ export function BuildSection({ state }: Props) {
       subtitle={
         phase === "choose"
           ? "Tap the card you love — horizontal or vertical"
-          : phase === "building"
-            ? "Building your card..."
-            : "Your card is ready"
+          : "Building your card..."
       }
       state={state}
     >
@@ -157,39 +158,6 @@ export function BuildSection({ state }: Props) {
           </motion.div>
         )}
 
-        {phase === "done" && template && (
-          <motion.div
-            key="done"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="flex flex-col items-center"
-          >
-            <motion.div
-              initial={{ scale: 0.9 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring", stiffness: 220, damping: 18 }}
-              className="mx-auto w-[92%]"
-              style={{ maxWidth: `${chosenMaxW}px` }}
-            >
-              <TemplateCard
-                template={template}
-                details={details}
-                photoDataUrl={photo}
-                qrValue={qrValue}
-              />
-            </motion.div>
-            <div className="mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 bg-emerald-400/10 border border-emerald-400/30 text-emerald-300 text-xs">
-              <Check size={14} /> {chosenMeta?.name} selected
-            </div>
-            <button
-              onClick={handleReset}
-              className="mt-2 text-xs text-white/45 hover:text-white/80 underline underline-offset-4"
-            >
-              Change style
-            </button>
-          </motion.div>
-        )}
       </AnimatePresence>
     </SectionFrame>
   );
