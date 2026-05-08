@@ -4,6 +4,7 @@ import {
   GetCommand,
   PutCommand,
   ScanCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { CardDetails, TemplateId } from "./types";
 
@@ -15,6 +16,12 @@ export type SessionRecord = {
   details: CardDetails;
   template: TemplateId;
   photoDataUrl: string | null;
+  /** Public S3 URL of the rendered-card JPEG snapshot. Set by the
+   *  email-send route the first time the customer's snapshot is captured;
+   *  reused by `/c/[id]` as the OpenGraph image so share-link unfurls
+   *  preview the actual card. Optional because older rows from before
+   *  this column existed don't have it. */
+  cardImageUrl?: string | null;
   /** Unix seconds. */
   createdAt: number;
   /** Unix seconds. DynamoDB's TTL feature deletes the row when this passes. */
@@ -99,6 +106,22 @@ export async function saveSession(
     }),
   );
   return full;
+}
+
+/** Patch the `cardImageUrl` on an existing session row. Called from the
+ *  email-send route after the rendered-card snapshot is uploaded to S3. */
+export async function setSessionCardImage(
+  id: string,
+  cardImageUrl: string,
+): Promise<void> {
+  await getClient().send(
+    new UpdateCommand({
+      TableName: tableName(),
+      Key: { id },
+      UpdateExpression: "SET cardImageUrl = :url",
+      ExpressionAttributeValues: { ":url": cardImageUrl },
+    }),
+  );
 }
 
 /** Fetch a session by id. Returns null if it doesn't exist (or has been

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { SESClient, SendRawEmailCommand } from "@aws-sdk/client-ses";
-import { getSession, isDbConfigured } from "@/lib/db";
+import { getSession, isDbConfigured, setSessionCardImage } from "@/lib/db";
+import { isS3Configured, uploadCardImage } from "@/lib/s3";
 import { buildVcard } from "@/lib/vcard";
 
 export const runtime = "nodejs";
@@ -13,11 +14,6 @@ type Body = {
   cardImageDataUrl?: string | null;
 };
 
-/** Wrap a base64 string at 76 chars per RFC 2045 so picky MTAs don't
- *  reject the message for over-long lines. */
-function wrapBase64(s: string): string {
-  return s.match(/.{1,76}/g)?.join("\r\n") ?? s;
-}
 
 function escapeHtml(s: string): string {
   return s
@@ -66,22 +62,14 @@ export async function POST(req: Request, { params }: Props) {
   }
 
   // Optional card snapshot. Accept JPEG (preferred — much smaller) or
-  // PNG. Reject anything that's not a real image data URL so a
-  // malicious payload can't piggy-back arbitrary bytes onto an email
-  // we're sending from a verified sender.
-  let cardImageBase64: string | null = null;
-  let cardImageMime: "image/jpeg" | "image/png" = "image/jpeg";
-  let cardImageExt: "jpg" | "png" = "jpg";
-  if (body.cardImageDataUrl && typeof body.cardImageDataUrl === "string") {
-    const m = body.cardImageDataUrl.match(
-      /^data:image\/(jpeg|png);base64,([\s\S]+)$/,
-    );
-    if (m) {
-      cardImageMime = m[1] === "png" ? "image/png" : "image/jpeg";
-      cardImageExt = m[1] === "png" ? "png" : "jpg";
-      cardImageBase64 = m[2];
-    }
-  }
+  // PNG. We don't attach it to the email anymore — it gets uploaded to
+  // S3 below, and the public URL is embedded in the body. Keeps SES
+  // raw-message + Lambda payload size flat regardless of how heavy the
+  // card is.
+  const cardImageDataUrl =
+    body.cardImageDataUrl && typeof body.cardImageDataUrl === "string"
+      ? body.cardImageDataUrl
+      : null;
 
   const session = await getSession(id);
   if (!session) {
@@ -102,10 +90,27 @@ export async function POST(req: Request, { params }: Props) {
   const d = session.details;
   const firstName = (d.fullName || "").trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hello,";
-  // The cid lets the inline-attached PNG render in the body via
-  // <img src="cid:...">. Most clients (Gmail, Outlook, Apple Mail) also
-  // list the cid'd image in the attachments tray.
-  const cardImageCid = `digital-card-${id}`;
+
+  // Upload the rendered-card snapshot to S3 (if we got one) so the email
+  // can reference it as a public URL instead of inlining base64. This
+  // sidesteps the Lambda 6 MB sync request limit + SES 10 MB raw-message
+  // cap entirely. We also persist the URL on the session row so the
+  // public /c/[id] page can use it as the OpenGraph image.
+  let cardImageUrl: string | null = session.cardImageUrl ?? null;
+  if (cardImageDataUrl && isS3Configured()) {
+    try {
+      cardImageUrl = await uploadCardImage(id, cardImageDataUrl);
+      // Best-effort DB update — if it fails, the email still goes out
+      // and OG falls back to the default site image. Log and move on.
+      try {
+        await setSessionCardImage(id, cardImageUrl);
+      } catch (err) {
+        console.warn("[email] cardImageUrl persist failed:", err);
+      }
+    } catch (err) {
+      console.warn("[email] card snapshot S3 upload failed:", err);
+    }
+  }
 
   const html = `<!doctype html>
 <html>
@@ -119,15 +124,24 @@ export async function POST(req: Request, { params }: Props) {
             <td style="padding:32px 32px 12px;">
               <h1 style="margin:0 0 10px;font-size:22px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;">${escapeHtml(greeting)}</h1>
               <p style="margin:0;font-size:15px;line-height:1.55;color:#475569;">
-                Here's your digital card. Open it on the web for the QR and live links, or save the <strong>.vcf</strong> attachment to add yourself to anyone's Contacts in one tap. The card image is also attached so you can share or print it.
+                Here's your digital card. Open it on the web for the QR and live links, or save the <strong>.vcf</strong> attachment to add yourself to anyone's Contacts in one tap.
               </p>
             </td>
           </tr>
 ${
-  cardImageBase64
+  cardImageUrl
     ? `          <tr>
             <td align="center" style="padding:20px 32px 8px;">
-              <img src="cid:${cardImageCid}" alt="${escapeHtml(d.fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
+              <a href="${escapeHtml(cardImageUrl)}" style="display:block;text-decoration:none;">
+                <img src="${escapeHtml(cardImageUrl)}" alt="${escapeHtml(d.fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:8px 32px 0;">
+              <a href="${escapeHtml(cardImageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">
+                Save image to your phone →
+              </a>
             </td>
           </tr>`
     : `          <tr>
@@ -154,7 +168,7 @@ ${
           <tr>
             <td style="padding:16px 32px 28px;text-align:center;">
               <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
-                ${cardImageBase64 ? "A <strong>.png</strong> of the card and a <strong>.vcf</strong> contact file are attached." : "The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app."}
+                The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app.${cardImageUrl ? " Tap the card image above to save it to your phone." : ""}
               </p>
             </td>
           </tr>
@@ -172,31 +186,28 @@ ${
     "or save the .vcf attachment to add yourself to anyone's Contacts.",
     "",
     `View on web: ${cardUrl}`,
+    cardImageUrl ? `\nSave the card image: ${cardImageUrl}` : "",
     "",
-    cardImageBase64
-      ? "Attached: card.png (image) and .vcf (contact)."
-      : "Attached: .vcf (contact).",
+    "Attached: .vcf (contact).",
   ]
     .filter(Boolean)
     .join("\n");
 
+  // MIME shape: multipart/mixed → multipart/alternative + text/vcard.
+  // The card image is hosted on S3 and referenced by URL in the HTML —
+  // it's no longer attached, so the email stays under ~10 KB regardless
+  // of card complexity. No more Lambda OOMs / SES "message too large".
   const outerBoundary = `----digital-card-outer-${Math.random().toString(36).slice(2)}`;
   const innerBoundary = `----digital-card-inner-${Math.random().toString(36).slice(2)}`;
-  const relatedBoundary = `----digital-card-related-${Math.random().toString(36).slice(2)}`;
-  const cardImageFilename = `${safeFilename(session.details.fullName)}-card.${cardImageExt}`;
 
-  // MIME shape (with image):
-  //   multipart/mixed
-  //   ├── multipart/related
-  //   │   ├── multipart/alternative (text + html — references cid:)
-  //   │   └── image/jpeg            (Content-ID + Content-Disposition:
-  //   │                              attachment so it renders inline AND
-  //   │                              shows in the attachments tray —
-  //   │                              single copy keeps the SES raw-message
-  //   │                              size well under the 10 MB limit).
-  //   └── text/vcard                (attachment)
-  // Without image: just outer/mixed → alternative + vCard.
-  const altBlock = [
+  const rawMessage = [
+    `From: ${fromEmail}`,
+    `To: ${email}`,
+    `Subject: ${subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/mixed; boundary="${outerBoundary}"`,
+    ``,
+    `--${outerBoundary}`,
     `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
     ``,
     `--${innerBoundary}`,
@@ -212,41 +223,7 @@ ${
     html,
     ``,
     `--${innerBoundary}--`,
-  ].join("\r\n");
-
-  const parts: string[] = [
-    `From: ${fromEmail}`,
-    `To: ${email}`,
-    `Subject: ${subject}`,
-    `MIME-Version: 1.0`,
-    `Content-Type: multipart/mixed; boundary="${outerBoundary}"`,
     ``,
-    `--${outerBoundary}`,
-  ];
-
-  if (cardImageBase64) {
-    parts.push(
-      `Content-Type: multipart/related; boundary="${relatedBoundary}"`,
-      ``,
-      `--${relatedBoundary}`,
-      altBlock,
-      ``,
-      `--${relatedBoundary}`,
-      `Content-Type: ${cardImageMime}; name="${cardImageFilename}"`,
-      `Content-Disposition: attachment; filename="${cardImageFilename}"`,
-      `Content-ID: <${cardImageCid}>`,
-      `Content-Transfer-Encoding: base64`,
-      ``,
-      wrapBase64(cardImageBase64),
-      ``,
-      `--${relatedBoundary}--`,
-      ``,
-    );
-  } else {
-    parts.push(altBlock, ``);
-  }
-
-  parts.push(
     `--${outerBoundary}`,
     `Content-Type: text/vcard; charset=UTF-8; name="${vcardFilename}"`,
     `Content-Disposition: attachment; filename="${vcardFilename}"`,
@@ -254,25 +231,9 @@ ${
     ``,
     vcard,
     ``,
-  );
-
-  parts.push(`--${outerBoundary}--`);
-  const rawMessage = parts.join("\r\n");
+    `--${outerBoundary}--`,
+  ].join("\r\n");
   const rawBytes = new TextEncoder().encode(rawMessage);
-
-  // SES raw-message hard limit is 10 MB. Reject early with a clear error
-  // rather than letting the SDK surface a generic "Message too large" 400.
-  if (rawBytes.byteLength > 9_500_000) {
-    console.warn(
-      `[email] payload too large: ${rawBytes.byteLength} bytes (image: ${
-        cardImageBase64?.length ?? 0
-      } base64 chars)`,
-    );
-    return NextResponse.json(
-      { error: "Email payload exceeded SES 10 MB limit." },
-      { status: 413 },
-    );
-  }
 
   try {
     const region = process.env.AWS_REGION ?? "us-east-1";

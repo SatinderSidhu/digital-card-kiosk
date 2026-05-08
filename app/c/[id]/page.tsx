@@ -25,10 +25,38 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const subtitle = [session.details.title, session.details.company]
       .filter(Boolean)
       .join(" · ");
-    return {
-      title: `${name}${subtitle ? " — " + subtitle : ""}`,
-      description: subtitle || "Digital business card",
-    };
+    const title = `${name}${subtitle ? " — " + subtitle : ""}`;
+    const description = subtitle || "Digital business card";
+
+    // When the customer's email-send route ran, it uploaded a JPEG
+    // snapshot of the rendered card to S3 and persisted the URL on the
+    // session. Use it as the OG image so iMessage/Slack/Twitter unfurls
+    // preview the actual card. Falls back to the site default when the
+    // snapshot isn't present yet (e.g. row from before this column
+    // existed, or share happened before the email auto-fired).
+    const og = session.cardImageUrl
+      ? {
+          openGraph: {
+            title,
+            description,
+            type: "profile" as const,
+            images: [
+              {
+                url: session.cardImageUrl,
+                alt: `${name}'s digital card`,
+              },
+            ],
+          },
+          twitter: {
+            card: "summary_large_image" as const,
+            title,
+            description,
+            images: [session.cardImageUrl],
+          },
+        }
+      : {};
+
+    return { title, description, ...og };
   } catch {
     return { title: "Digital Card" };
   }

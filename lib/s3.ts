@@ -73,6 +73,56 @@ export async function uploadPhoto(
   return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
 }
 
+/**
+ * Upload the rendered-card snapshot (JPEG or PNG data URL) to S3 under
+ * `cards/<sessionId>.<ext>`. Used by the email-send route to host the
+ * card image instead of attaching it — keeps the Lambda payload + SES
+ * raw-message size flat regardless of how heavy the card is.
+ *
+ * Reuses S3_PHOTO_BUCKET so deployers don't need a third bucket env
+ * var. The bucket policy that already grants `s3:GetObject` on
+ * `photos/*` should be extended to cover `cards/*` as well.
+ */
+export async function uploadCardImage(
+  sessionId: string,
+  dataUrl: string,
+): Promise<string> {
+  const bucket = process.env.S3_PHOTO_BUCKET;
+  if (!bucket) {
+    throw new Error("S3_PHOTO_BUCKET is not configured.");
+  }
+
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
+  if (!match) {
+    throw new Error("Card image must be a base64 image data URL.");
+  }
+  const [, mimeType, base64Data] = match;
+  const ext = MIME_TO_EXT[mimeType.toLowerCase()] ?? "bin";
+  const key = `cards/${sessionId}.${ext}`;
+  const buffer = Buffer.from(base64Data, "base64");
+
+  const region = process.env.AWS_REGION ?? "us-east-1";
+
+  await getClient().send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: buffer,
+      ContentType: mimeType,
+      // Hint the browser to download rather than render, so the email's
+      // "Save image" link triggers a save dialog. Inline <img src=...>
+      // still renders in clients that fetch directly without honouring
+      // disposition.
+      ContentDisposition: `attachment; filename="${sessionId}.${ext}"`,
+      // 30 days — matches the Dynamo TTL on the session that points
+      // here. Add a matching S3 lifecycle rule on `cards/*`.
+      CacheControl: "public, max-age=2592000, immutable",
+    }),
+  );
+
+  return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+}
+
 const REVIEW_MIME_TO_EXT: Record<string, string> = {
   "video/webm": "webm",
   "video/mp4": "mp4",
