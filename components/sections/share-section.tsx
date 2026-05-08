@@ -196,14 +196,19 @@ export function ShareSection({ state }: Props) {
       try {
         const html2canvas = (await import("html2canvas")).default;
         if (cancelled || !cardCaptureRef.current) return;
+        // scale=1 (was 1.5) + JPEG @ 0.85 (was PNG) — keeps the email
+        // payload under ~700 KB so it fits Lambda's 6 MB sync request
+        // limit and doesn't OOM on encoding. Photographic gradients +
+        // headshot compress well as JPEG; the visual difference vs PNG
+        // is imperceptible at email-display sizes.
         const canvas = await html2canvas(cardCaptureRef.current, {
-          backgroundColor: null,
-          scale: 1.5,
+          backgroundColor: "#0b0f1a",
+          scale: 1,
           useCORS: true,
           logging: false,
         });
         if (cancelled) return;
-        setCardImage(canvas.toDataURL("image/png"));
+        setCardImage(canvas.toDataURL("image/jpeg", 0.85));
       } catch (err) {
         // Capture is best-effort — if it fails, the email still goes out
         // with the link + vCard. Log and move on.

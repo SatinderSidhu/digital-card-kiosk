@@ -65,13 +65,22 @@ export async function POST(req: Request, { params }: Props) {
     );
   }
 
-  // Optional PNG snapshot. Reject anything that's not a real image data
-  // URL so a malicious payload can't piggy-back arbitrary bytes onto an
-  // email we're sending from a verified sender.
+  // Optional card snapshot. Accept JPEG (preferred — much smaller) or
+  // PNG. Reject anything that's not a real image data URL so a
+  // malicious payload can't piggy-back arbitrary bytes onto an email
+  // we're sending from a verified sender.
   let cardImageBase64: string | null = null;
+  let cardImageMime: "image/jpeg" | "image/png" = "image/jpeg";
+  let cardImageExt: "jpg" | "png" = "jpg";
   if (body.cardImageDataUrl && typeof body.cardImageDataUrl === "string") {
-    const m = body.cardImageDataUrl.match(/^data:image\/png;base64,([\s\S]+)$/);
-    if (m) cardImageBase64 = m[1];
+    const m = body.cardImageDataUrl.match(
+      /^data:image\/(jpeg|png);base64,([\s\S]+)$/,
+    );
+    if (m) {
+      cardImageMime = m[1] === "png" ? "image/png" : "image/jpeg";
+      cardImageExt = m[1] === "png" ? "png" : "jpg";
+      cardImageBase64 = m[2];
+    }
   }
 
   const session = await getSession(id);
@@ -174,17 +183,19 @@ ${
   const outerBoundary = `----digital-card-outer-${Math.random().toString(36).slice(2)}`;
   const innerBoundary = `----digital-card-inner-${Math.random().toString(36).slice(2)}`;
   const relatedBoundary = `----digital-card-related-${Math.random().toString(36).slice(2)}`;
-  const cardImageFilename = `${safeFilename(session.details.fullName)}-card.png`;
+  const cardImageFilename = `${safeFilename(session.details.fullName)}-card.${cardImageExt}`;
 
-  // MIME shape (with PNG):
+  // MIME shape (with image):
   //   multipart/mixed
   //   ├── multipart/related
-  //   │   ├── multipart/alternative (text + html)
-  //   │   └── image/png            (inline, Content-ID — referenced by html)
-  //   ├── text/vcard               (attachment)
-  //   └── image/png                (attachment — explicit second copy so the
-  //                                 client lists it in the attachments tray)
-  // Without PNG: just outer/mixed → alternative + vCard.
+  //   │   ├── multipart/alternative (text + html — references cid:)
+  //   │   └── image/jpeg            (Content-ID + Content-Disposition:
+  //   │                              attachment so it renders inline AND
+  //   │                              shows in the attachments tray —
+  //   │                              single copy keeps the SES raw-message
+  //   │                              size well under the 10 MB limit).
+  //   └── text/vcard                (attachment)
+  // Without image: just outer/mixed → alternative + vCard.
   const altBlock = [
     `Content-Type: multipart/alternative; boundary="${innerBoundary}"`,
     ``,
@@ -221,8 +232,8 @@ ${
       altBlock,
       ``,
       `--${relatedBoundary}`,
-      `Content-Type: image/png; name="${cardImageFilename}"`,
-      `Content-Disposition: inline; filename="${cardImageFilename}"`,
+      `Content-Type: ${cardImageMime}; name="${cardImageFilename}"`,
+      `Content-Disposition: attachment; filename="${cardImageFilename}"`,
       `Content-ID: <${cardImageCid}>`,
       `Content-Transfer-Encoding: base64`,
       ``,
@@ -245,33 +256,39 @@ ${
     ``,
   );
 
-  if (cardImageBase64) {
-    parts.push(
-      `--${outerBoundary}`,
-      `Content-Type: image/png; name="${cardImageFilename}"`,
-      `Content-Disposition: attachment; filename="${cardImageFilename}"`,
-      `Content-Transfer-Encoding: base64`,
-      ``,
-      wrapBase64(cardImageBase64),
-      ``,
-    );
-  }
-
   parts.push(`--${outerBoundary}--`);
   const rawMessage = parts.join("\r\n");
+  const rawBytes = new TextEncoder().encode(rawMessage);
+
+  // SES raw-message hard limit is 10 MB. Reject early with a clear error
+  // rather than letting the SDK surface a generic "Message too large" 400.
+  if (rawBytes.byteLength > 9_500_000) {
+    console.warn(
+      `[email] payload too large: ${rawBytes.byteLength} bytes (image: ${
+        cardImageBase64?.length ?? 0
+      } base64 chars)`,
+    );
+    return NextResponse.json(
+      { error: "Email payload exceeded SES 10 MB limit." },
+      { status: 413 },
+    );
+  }
 
   try {
     const region = process.env.AWS_REGION ?? "us-east-1";
     const ses = new SESClient({ region });
     await ses.send(
-      new SendRawEmailCommand({
-        RawMessage: { Data: new TextEncoder().encode(rawMessage) },
-      }),
+      new SendRawEmailCommand({ RawMessage: { Data: rawBytes } }),
     );
     return NextResponse.json({ ok: true });
   } catch (err) {
-    let message = "Email failed.";
-    if (err instanceof Error) message = err.message;
+    // Surface the SES error name/code so 400 vs 500 is distinguishable in
+    // CloudWatch (sandbox-not-verified vs throttled vs payload size etc.).
+    const name = err instanceof Error ? err.name : "Unknown";
+    const message = err instanceof Error ? err.message : "Email failed.";
+    console.error(
+      `[email] SES send failed (${name}): ${message} — raw size ${rawBytes.byteLength} bytes`,
+    );
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
