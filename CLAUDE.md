@@ -3,93 +3,207 @@
 # Digital Card Kiosk — project context for Claude
 
 ## What this is
-A kiosk web app (Next.js 16 App Router, TS, Tailwind v4) that lets a walk-up
-customer build a digital business card and share it to their phone or email.
 
-**Form factor:** a tall vertical display (phone-proportioned, ~480 px wide) —
-digital signage in portrait, not a full iPad. The entire experience is a
-**single scrolling page** with four progressively-revealed sections.
+Three-surface kiosk app (Next.js 16 App Router, TS, Tailwind v4):
 
-## The flow (one page, four sections)
-1. **Start here** — capture headshot via front camera (`react-webcam`).
-2. **Make it yours** — two live-preview templates (Aurora, Neon) showing
-   `FAKE_CARD` placeholder data until the user provides their own via:
-   - Scan Card → rear camera + Tesseract.js OCR → `parseCardText`
-   - Scan QR → ZXing live decode → `parseScannedCode` (vCard/MECARD/plain)
-   - Type → manual form
-   Once a name is entered the input collapses to a compact summary with Edit.
-3. **Pick your style** — tap one of the two templates → 1.6 s "building"
-   animation → ready state.
-4. **Take it with you** — final card + scan-to-phone QR (mocked session URL)
-   + email form. Confetti on send; auto-reset after 25 s.
+| Route | Audience | Purpose |
+|---|---|---|
+| `/` | Walk-up customer | Build a digital business card and share it |
+| `/reviews` | Walk-up customer | Record a 6-question video review |
+| `/admin` | Venue staff | Password-gated dashboard over cards + reviews |
 
-The active section is derived from store state (photo present, name present,
-template picked) — there is no explicit step counter.
+**Form factor:** tall vertical display (~1080×1920+). Compact mode is
+also supported for laptop testing.
+
+## The card flow (`/`)
+
+Internally a 4-step zustand wizard, presented to the customer as **3
+logical steps** because the picker auto-advances after the build animation:
+
+1. **Photo** — front-camera capture via `react-webcam`. AI studio polish
+   (Gemini) and remove-background (`@imgly/background-removal`) are
+   opt-in floating buttons. Step-1 controls also include the orientation
+   pills, the S/M/L size pills, and the **template picker** popover
+   (lets the customer set any template as the session default upfront,
+   with a Reset to default that snaps back to `FACTORY_DEFAULT_TEMPLATE`).
+2. **Details** — the Aurora preview *is* the form. Each text field
+   (`fullName`, `title`, `company`, `phone`, `email`, `website`) renders
+   as a styled inline input directly on the card. The legacy split-form
+   view is removed. **Scan a paper card** (camera + Tesseract OCR + QR
+   via ZXing) is still available.
+3. **Card + Share (steps 3 + 4 merged)** — picking a template runs a
+   1.6s build animation, then auto-advances to the share screen. Card
+   on top, Scan-to-phone QR + Email panel below. Email is **auto-fired**
+   to the address from step 2 the moment the share link is ready, with:
+   - Inline rendered card image (cid:) in the email body.
+   - Downloadable PNG/JPEG card attachment.
+   - vCard `.vcf` attachment.
+   - View on web button → `/c/[id]`.
+   Bottom row has **Change style** (back to picker), **Start over**, and
+   **Clear my session** (confirm + reset + sessionStorage clear + hard
+   reload). Auto-resets after 25s in kiosk mode.
+
+The active section in `app/page.tsx` is derived from store state — no
+explicit step counter exposed in code beyond the wizard step number.
+
+## The review flow (`/reviews`)
+
+Independent of the card flow; separate zustand store
+(`lib/review-store.ts`).
+
+1. **Intro** — name, title, email, camera picker.
+2. **Recording** — `MediaRecorder` on `getUserMedia({video,audio})` with
+   broadcast-style overlays (step pips, countdown ring, lower-third
+   chyron with name + title + LIVE badge, "Up next" preview).
+   S/M/L size selector. **Stop** + **Next question** controls.
+3. **Playback** — review with Retake or Submit.
+4. **Done** — confetti + auto-reset.
+
+Submit flow: presigned PUT to `S3_REVIEW_BUCKET` via
+`/api/reviews` → SES email via `/api/reviews/[id]/email`. The email
+endpoint also writes a row to `DYNAMODB_REVIEWS_TABLE` so the review
+shows up in `/admin`.
+
+## The admin dashboard (`/admin`)
+
+HMAC cookie session, driven by `ADMIN_PASSWORD`
+(see [lib/admin-auth.ts](lib/admin-auth.ts)). Server component layout at
+[app/admin/layout.tsx](app/admin/layout.tsx) gates every admin route by
+checking the cookie; renders `<LoginForm>` or `<AdminShell>` accordingly.
+
+- `/admin` — Cards / Reviews tabs with count tiles + list tables.
+- `/admin/cards/[id]` — **Renders the actual card preview** as the
+  hero (photo + chosen template + QR), data grid, and resend-email
+  form. Submit captures the rendered card via `html2canvas` and attaches
+  the PNG to the email. The photo is inlined as a data URL by the API
+  so capture works without S3 CORS configuration.
+- `/admin/reviews/[id]` — Embedded video player + record + resend form.
+
+Admin email endpoints proxy to the public SES routes so SES rendering
+stays single-source.
 
 ## Key files
-- [lib/store.ts](lib/store.ts) — zustand store (`useWizard`). Holds
-  `photoDataUrl`, `details`, `template: TemplateId | null`, `sessionId`,
-  plus `ensureSession` (deferred client-side id to avoid hydration mismatch).
+
+- [lib/store.ts](lib/store.ts) — `useWizard`. Holds `step`, `mode`,
+  `photoDataUrl`, `details`, `template`, `sessionId`, `cameraDeviceId`.
+  `ensureSession()` is the deferred client-side id assignment that
+  prevents hydration mismatches on the QR SVG.
+- [lib/review-store.ts](lib/review-store.ts) — `useReview`. Holds
+  `phase` (`intro` / `recording` / `playback` / `done`), `sessionId`,
+  `name`, `title`, `email`, `videoBlob`, `videoSize`.
 - [lib/types.ts](lib/types.ts) — `CardDetails`, `TemplateId`,
-  `PAGE_TEMPLATES` (the two shown on the page), `SECTIONS`.
+  `PAGE_TEMPLATES` (all six), `FACTORY_DEFAULT_TEMPLATE` (Aurora).
+- [lib/review-questions.ts](lib/review-questions.ts) — review question
+  config + per-question durations.
 - [lib/fake-data.ts](lib/fake-data.ts) — `FAKE_CARD`, `withFallback`,
   `hasRealDetails`.
 - [lib/vcard.ts](lib/vcard.ts) — `buildVcard(details, sessionId)`.
-- [lib/parse-card.ts](lib/parse-card.ts) — OCR text → `CardDetails` heuristics
-  + vCard/MECARD parsers.
-- [lib/mock-backend.ts](lib/mock-backend.ts) — **mocked** session-create +
-  email-send. Real backend swaps in here (search for `TODO`).
+- [lib/parse-card.ts](lib/parse-card.ts) — OCR-text → `CardDetails`
+  heuristics + vCard/MECARD parsers.
+- [lib/mock-backend.ts](lib/mock-backend.ts) — client-side API
+  helpers; the `mock*` prefix is historical, these now hit real route
+  handlers backed by AWS.
+- [lib/db.ts](lib/db.ts) — DynamoDB helpers: `saveSession`, `getSession`,
+  `listSessions` (+ same for reviews).
+- [lib/s3.ts](lib/s3.ts) — `uploadPhoto`, `presignReviewUpload`,
+  `isS3Configured`, `isReviewS3Configured`.
+- [lib/admin-auth.ts](lib/admin-auth.ts) — HMAC cookie helpers.
 - [components/ui.tsx](components/ui.tsx) — shared `PrimaryButton`,
   `GhostButton`, `SegmentedControl`, `Field`, `TextInput`, `StepShell`.
-- [components/sections/section-frame.tsx](components/sections/section-frame.tsx) —
-  consistent chrome (numbered badge, title, idle/active/done state, pulse
-  ring on active).
-- [components/sections/](components/sections/) — four section components,
-  one per file: `photo-section`, `personalize-section`, `build-section`,
-  `share-section`.
-- [components/scanners/](components/scanners/) — `card-scanner.tsx` (OCR),
-  `qr-scanner.tsx` (ZXing).
-- [components/forms/details-form.tsx](components/forms/details-form.tsx) —
-  6-field editable form bound directly to the store.
+- [components/sections/](components/sections/) — `photo-section`,
+  `personalize-section` (inline-edit on Aurora), `build-section`
+  (picker only — no done state, auto-advances), `share-section`
+  (combined with done state UI; auto-fires email; has change-style +
+  clear-session).
 - [components/templates/card-templates.tsx](components/templates/card-templates.tsx) —
-  `TemplateCard` dispatcher + all three template designs (Aurora, Mono, Neon).
-  Note: the page only exposes **Aurora + Neon** via `PAGE_TEMPLATES`; Mono is
-  retained in code for future toggling.
-- [app/page.tsx](app/page.tsx) — sticky header, progress-dots rail, the four
+  `TemplateCard` dispatcher + all six designs. **All templates accept
+  an optional `onEdit` prop**; Aurora honours it (rendering inputs
+  inline). `EditableInput` is the helper for the inline-edit fields.
+- [components/template-picker.tsx](components/template-picker.tsx) —
+  step-1 popover for choosing default template. Includes Reset to default.
+- [components/marketing-slot.tsx](components/marketing-slot.tsx) —
+  bottom-half kiosk video player; sources `/DigitalCardPromo.mp4` from
+  `/public` (bundled).
+- [components/reviews/](components/reviews/) — `intro-form`, `recorder`,
+  `playback`, `done-state`, `question-overlay`, `lower-third`.
+- [components/admin/](components/admin/) — `login-form`, `admin-shell`,
+  `resend-email` (with optional `attachImage` getter).
+- [app/page.tsx](app/page.tsx) — sticky header, step pills, the four
   section components stacked, auto-scroll on completion.
-- [app/globals.css](app/globals.css) — dark aurora theme, glass/shimmer/pulse
-  keyframes.
+- [app/globals.css](app/globals.css) — dark aurora theme, glass/shimmer/
+  pulse keyframes.
 
 ## Conventions
-- All shared state lives in the zustand store. Don't duplicate it in local
-  component state unless it's ephemeral UI (e.g. segmented-control mode,
-  `phase: choose | building | done` inside `BuildSection`).
-- Active-section calculation lives in `app/page.tsx`. Each section receives
-  `state: "idle" | "active" | "done"` as a prop from the page.
+
+- All shared state lives in zustand stores. Don't duplicate it in local
+  component state unless it's ephemeral UI (e.g. `phase` inside
+  `BuildSection`, popover open/close).
+- Each section receives `state: "idle" | "active" | "done"` from the
+  page; `SectionFrame` renders the chrome.
 - Animations use `framer-motion`. Prefer `layoutId` for shared-element
-  transitions (see `SegmentedControl`).
+  transitions.
 - Icons come from `lucide-react`.
 - Tailwind v4 — colors are in `@theme inline` in `globals.css`, not
   `tailwind.config`.
-- `sessionId` MUST stay deterministic on first render (empty string) and be
-  populated in a client effect via `ensureSession()` — otherwise QR SVG paths
-  diverge and React hydration errors.
+- `sessionId` MUST stay deterministic on first render (empty string)
+  and be populated in a client effect via `ensureSession()` — otherwise
+  the QR SVG path attribute diverges on hydration.
+- **`Math.random()` and other impure calls aren't allowed during
+  render** under the React 19 lint rules. Use `useState(() => ...)`
+  lazy initializers (see `Confetti` in `share-section.tsx`) or compute
+  in a `useEffect`.
+- **`setState` directly inside an effect body** is also linted out. Wrap
+  in an async IIFE so the call lands in a microtask
+  (`void (async () => { setX(...); })()`).
+
+## Email & SES
+
+`/api/sessions/[id]/email` builds a `multipart/mixed → multipart/related`
+MIME message:
+
+- `multipart/related`
+  - `multipart/alternative` (text + HTML — HTML references `cid:` for
+    the inline card snapshot)
+  - `image/jpeg` or `image/png` (Content-ID + Content-Disposition:
+    attachment so it renders inline AND lists in the attachments tray —
+    single copy keeps payload size down)
+- `text/vcard` (attachment)
+
+Pre-flight rejects rawMessage > 9.5 MB with a 413 instead of letting
+SES return a generic 400. Logs SES error name + raw byte count to
+CloudWatch on failure.
+
+The kiosk auto-send uses JPEG @ scale 1.0 quality 0.85 (~300-700 KB
+per card) to fit comfortably in the Lambda 6 MB sync request limit.
+The admin resend uses PNG @ scale 1.0 (~1-3 MB) since the operator
+flow is one-at-a-time and quality is more valuable than speed.
 
 ## Runtime requirements
-- Camera + OCR + QR decode require **HTTPS or localhost** (browser
-  mediaDevices constraint).
-- Tesseract.js downloads wasm + English traineddata on first scan (~10 MB).
-  Plan to bundle locally before production.
-- Touch-optimized: `touch-action: manipulation`, no zoom, no text selection.
-- Designed for a tall display; `max-w-[480px]` on the main container.
 
-## What's mocked right now
-- `lib/mock-backend.ts` — both session-create and email-send are fake. They
-  return after a setTimeout. Replace with real API calls when the backend is
-  ready.
-- The scan-to-phone QR points at `${origin}/c/<sessionId>` — that route
-  doesn't exist yet.
+- Camera + OCR + QR decode + MediaRecorder require **HTTPS or
+  localhost**.
+- Tesseract.js downloads wasm + English traineddata on first scan
+  (~10 MB).
+- Touch-optimized: `touch-action: manipulation`, no zoom, no text
+  selection (admin opts out inline).
+- Designed for a tall display; `max-w-[480px]` constrains the kiosk
+  layout in compact mode but admin and per-step containers go wider
+  on landscape.
 
-## Requirements docs
+## What's still placeholder / TODO
+
+- **Tesseract traineddata** is fetched from CDN on first scan; bundle
+  locally for production-grade kiosks that may run offline.
+- **Card-page rate limit** on `/c/[id]` and `/api/sessions` — not
+  implemented.
+- **`mockSendSms` + `/api/sessions/[id]/sms`** still exist but aren't
+  wired to any UI. Safe to delete if SMS is never coming back.
+- **Per-deployment branding** (multi-tenant) — out of scope; single
+  brand only.
+
+## Documentation
+
+- [README.md](README.md) — entry point: live demo, surfaces, setup
+- [CHANGELOG.md](CHANGELOG.md) — release history
 - [docs/BRD.md](docs/BRD.md) — business requirements
-- [docs/TRD.md](docs/TRD.md) — technical requirements
+- [docs/TRD.md](docs/TRD.md) — technical requirements + API contract

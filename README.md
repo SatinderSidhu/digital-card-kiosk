@@ -3,65 +3,117 @@
 [![CI](https://github.com/SatinderSidhu/digital-card-kiosk/actions/workflows/ci.yml/badge.svg)](https://github.com/SatinderSidhu/digital-card-kiosk/actions/workflows/ci.yml)
 
 **Live demo:** <https://digitalcard.kitlabs.us>
+**Release history:** [CHANGELOG.md](CHANGELOG.md)
 
 A self-service kiosk that lets a walk-up customer build and share a digital
-business card in under a minute — take a photo, scan an existing card or QR
-code (or type), pick one of six designs, and send the result to your phone
-via QR, SMS, or email.
+business card in under a minute, **plus** record a short video review and an
+admin dashboard for staff. Built with **Next.js 16 (App Router) · React 19 ·
+TypeScript · Tailwind v4**, deployed on **AWS Amplify Hosting**.
 
-Built with **Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4**.
-Camera capture, OCR, and QR decoding all run on-device. AI studio polish
-runs server-side via **Google Gemini 2.5 Flash Image**, deployed on **AWS
-Amplify Hosting**.
+The kiosk has three surfaces:
+
+| Route | Audience | What it is |
+|---|---|---|
+| `/` | Walk-up customer | Build a digital business card (photo → details → card + share) |
+| `/reviews` | Walk-up customer | Record a 6-question video review with broadcast-style overlay |
+| `/admin` | Venue staff | Password-gated dashboard: count + list + detail of cards and reviews; resend emails |
 
 ![Hero](docs/screenshots/00-hero.png)
 
 ---
 
-## The four-step flow
+## The card flow (`/`)
 
-| # | Step | What it does |
+The customer-facing flow has **three logical steps**:
+
+| # | Step | What happens |
 |---|---|---|
-| 1 | **Photo** | Live card preview with the webcam slotted into the photo frame. Tap **Capture**, then **Update Info** to advance. |
-| 2 | **Details** | Big card preview on the left; on the right, a unified camera that auto-detects QR codes (ZXing) and captures for OCR (Tesseract). Editable form after either. |
-| 3 | **Style** | Pick one of six templates across **three landscape** and **three portrait** designs. A 1.6 s "Assembling your card..." animation bridges to the final state. |
-| 4 | **Share** | Final card + three share channels: **Scan to phone** (QR), **Text me the link** (SMS), **Email me**. Confetti on success, auto-reset after 25 s. |
+| 1 | **Photo** | Live card preview with the webcam slotted into the photo frame. Capture, retake, optional **AI studio polish** (Gemini) and **remove background** (in-browser WebGPU). Pick orientation, size, and a default template right here. |
+| 2 | **Details** | The card preview *is* the form. Each text field (name, title, company, phone, email, website) is an editable input directly on the Aurora template. Or tap **Scan a paper card** to fill via camera + OCR (Tesseract) or QR (ZXing). |
+| 3 | **Card + Share** | Final card on top, share options below: **Scan to phone** (QR) and **Email me** (auto-fired to the address from step 2). **Change style** returns to the template picker; **Clear my session** wipes everything. |
 
-Below each step content sits a dedicated **marketing slot** (bottom 50 % of
-the kiosk viewport) for a looping brand video or ad — swap the placeholder in
-[`components/marketing-slot.tsx`](components/marketing-slot.tsx) for a `<video>`
-element when the asset is ready.
+Behind the scenes the flow is implemented as four wizard steps internally
+(Photo, Details, Style picker, Share) but the customer never lands on the
+picker as a standalone screen — picking a template auto-advances through a
+short build animation directly into Card + Share.
 
-## Screenshots
+### Email behaviour
 
-| Step 1 — Capture | Step 2 — Details |
-|---|---|
-| ![Step 1](docs/screenshots/01-capture.png) | ![Step 2](docs/screenshots/02-details.png) |
+When the customer reaches the share screen, an email is **automatically**
+sent to the address they entered in step 2. The email contains:
 
-| Step 3 — Pick a style | Step 4 — Share |
-|---|---|
-| ![Step 3](docs/screenshots/03-style.png) | ![Step 4](docs/screenshots/04-share.png) |
+- A personalized "Hi {firstName}," greeting and a friendly intro.
+- The **rendered card image** inline (PNG/JPEG snapshot captured client-side
+  via `html2canvas`) — so the email looks like the card they just designed.
+- A **downloadable PNG/JPEG** attachment of the same card (for "save to phone").
+- A `.vcf` (vCard) attachment that opens directly in the phone's Contacts app.
+- A **View on web** button linking to the public card at `/c/[id]`.
 
-> Drop PNGs into [`docs/screenshots/`](docs/screenshots/) using those filenames
-> to replace the placeholders.
+The form below stays usable for sending to a different address (e.g. a
+colleague).
 
-## The six designs
+### The six templates
 
-Three **landscape** (7:4) and three **portrait** (5:7) templates, each with a
-distinct mood:
+Three landscape (7:4) and three portrait (5:7) designs:
 
-| Template | Orientation | Mood | Palette |
-|---|---|---|---|
-| **Aurora** | landscape | Professional | indigo → violet → cyan |
-| **Mono** | landscape | Minimal | white / neutral-900 |
-| **Sunset** | landscape | Creative | orange → fuchsia → purple |
-| **Neon** | portrait | Playful | black + pink/cyan glow |
-| **Forest** | portrait | Nature | emerald → deep green |
-| **Noir** | portrait | Luxury | black + gold accents |
+| Template | Orientation | Layout summary |
+|---|---|---|
+| **Aurora** | landscape | Photo + name as a wide hero row, title/company/contact + QR sharing the row below. Indigo → violet → cyan gradient. Edit-mode is the same shape so long names always fit. |
+| **Mono** | landscape | QR-first minimal — large QR on the left, name on the right. Clean white + neutral-900. No photo or contact rows; everything's encoded in the QR. |
+| **Sunset** | landscape | Same wide-name layout as Aurora with a warm orange → fuchsia → purple palette and italic company line. |
+| **Neon** | portrait | QR-first minimal — large centered QR with the gradient name underneath. No photo. Best for a "name-tag with QR" feel. |
+| **Forest** | portrait | Photo + QR top, name + title + company + contact rows below. Emerald → deep green gradient. |
+| **Noir** | portrait | Centered circular photo with gold accents on a black canvas. Times New Roman serif for the name; uppercase tracking. **The default portrait template.** |
 
 All templates use CSS container queries (`cqw` units) so typography scales
-proportionally at every render size — from the 1400 px step-1 hero down to
-the ~300 px picker thumbnail.
+proportionally at every render size — the same design works at the picker
+thumbnail (~250 px wide) and the share-screen hero (1400 px wide).
+
+---
+
+## The video review flow (`/reviews`)
+
+Standalone broadcast-style video capture. Independent of the card flow.
+
+1. **Intro form** — name, title (shown on the lower-third overlay),
+   email, camera picker.
+2. **Recording** — live video with overlays:
+   - Step pips at top (`01 → 06`)
+   - Countdown ring + current question prompt
+   - Broadcast-style **lower-third** (red accent stripe + name + title +
+     pulsing LIVE badge)
+   - **Up next** preview between the video and controls
+   - **Stop** button + **Next question** button
+3. **Playback** — review the recording with **Retake** or **Send**.
+4. **Done** — confetti + auto-reset (25 s).
+
+Recording uses `MediaRecorder` (WebM on Chrome/Firefox, MP4 on Safari).
+The blob uploads directly to S3 via a server-issued presigned PUT URL — no
+streaming through Lambda. SES email confirmation with the playback link
+follows on success.
+
+Questions are configured in
+[`lib/review-questions.ts`](lib/review-questions.ts) with per-question
+durations.
+
+---
+
+## The admin dashboard (`/admin`)
+
+Password-gated (HMAC cookie session, driven by `ADMIN_PASSWORD`).
+Two tabs:
+
+- **Cards** — count tile + table of all card sessions. Click a row to open
+  the detail page with the **rendered card preview** (the actual designed
+  template), the data grid, a link to the public card, and a **Resend
+  email** form. Submitting captures the rendered card as PNG and ships it
+  to the customer's email (or any address you type).
+- **Reviews** — count tile + table of all submitted reviews. Detail page
+  shows an embedded video player, full record, and a resend-email form.
+
+The admin layout is a Next.js Server Component — it checks the auth
+cookie on every request and returns the login form if missing. After
+login, `router.refresh()` re-runs the layout and the dashboard appears.
 
 ---
 
@@ -79,27 +131,6 @@ npm run dev
 
 Open <http://localhost:3000>. Allow camera permission when prompted.
 
-### Photo edit features (after capture)
-
-Two opt-in floating buttons sit on the bottom-right of the photo card:
-
-- **✨ Remove background** — runs `@imgly/background-removal` entirely
-  in the browser (WebGPU/WASM). No API key, no upload. ~30 MB model
-  download on first click, cached after.
-- **🪄 AI studio polish** — POSTs the photo to a Next.js route handler
-  at `/api/enhance` which calls **Google Gemini 2.5 Flash Image**.
-  Returns a polished studio headshot in 5–15 s.
-
-The AI polish requires a Gemini API key:
-
-```bash
-# .env.local (dev) or Amplify env vars (prod)
-GEMINI_API_KEY=your_key_from_google_ai_studio
-```
-
-Without the key the route returns 503 with a helpful message; the
-sparkles bg-removal button still works (it's all local).
-
 ### Scripts
 
 | Command | What it does |
@@ -114,247 +145,223 @@ sparkles bg-removal button still works (it's all local).
 
 ## Deploy to AWS Amplify
 
-The repo is pre-configured for AWS Amplify Hosting (Next.js SSR mode — keeps
-server-side route handlers possible for future API calls). Build spec lives
-in [`amplify.yml`](amplify.yml).
+The repo is pre-configured for AWS Amplify Hosting (Next.js SSR mode).
+Build spec lives in [`amplify.yml`](amplify.yml).
 
-1. **Sign in to the [AWS Amplify console](https://console.aws.amazon.com/amplify/)** and click _Create new app → Host web app_.
+1. **Sign in to the [AWS Amplify console](https://console.aws.amazon.com/amplify/)** → _Create new app → Host web app_.
 2. **Connect GitHub** → authorize Amplify → pick `SatinderSidhu/digital-card-kiosk` → branch `main`.
-3. Amplify auto-detects Next.js. Leave the build settings alone — `amplify.yml`
-   already declares the correct phases and artifact path.
+3. Amplify auto-detects Next.js. Leave the build settings alone —
+   `amplify.yml` declares phases, artifacts, and the env-var bridge into
+   `.env.production` (Amplify console env vars are build-time-only; the
+   shim makes them available at runtime to the SSR Lambda).
 4. **Environment variables** under _App settings → Environment variables_:
-   - `GEMINI_API_KEY` — required for the AI studio-polish button on the
-     photo card and for AI card-extraction in step 2. Without it those
-     features return 503 with a helpful message; bg-removal still works
-     (all local).
-   - `DYNAMODB_TABLE` — name of the DynamoDB table backing the public
-     card pages (e.g. `digital-card-kiosk-sessions`). Without it the QR
-     "Scan to phone" code points at a server that 503s.
-   - `S3_PHOTO_BUCKET` — name of the S3 bucket the kiosk uploads
-     photos to (e.g. `digital-card-kiosk-photos`). Sessions without a
-     photo (Skip-photo button) work without it; sessions with a photo
-     will 503 until it's set.
-   - `SES_FROM_EMAIL` — the verified-in-SES sender address used by the
-     "Email me" button (e.g. `noreply@kitlabs.us`). Without it the
-     email button returns 503 with a helpful message.
-   - `NEXT_PUBLIC_SITE_URL` — recommended. Used by the OG image, vCard
-     QR, and the share URL the kiosk hands out (e.g.
-     `https://digitalcard.kitlabs.us`).
-   - `AWS_REGION` — usually injected by Amplify automatically. Override
-     only if your DynamoDB / SES / SNS resources are in a different
-     region.
-5. **Save and deploy.** First build takes ~3–4 min. You'll get a URL like
-   `https://main.d2xxxxxx.amplifyapp.com`. Every push to `main` auto-deploys.
+
+   | Var | Required | Used for |
+   |---|---|---|
+   | `GEMINI_API_KEY` | Optional | AI studio polish + AI card extraction. Without it, those features 503 with a clear message; bg-removal + manual entry still work. |
+   | `DYNAMODB_TABLE` | Yes for `/c/[id]` | Sessions table for cards (e.g. `digital-card-kiosk-sessions`). |
+   | `DYNAMODB_REVIEWS_TABLE` | Yes for `/admin` reviews | Reviews table (e.g. `digital-card-kiosk-reviews`). |
+   | `S3_PHOTO_BUCKET` | Yes for photos | Bucket name for kiosk-uploaded photos. |
+   | `S3_REVIEW_BUCKET` | Yes for `/reviews` | Bucket name for uploaded review videos. |
+   | `SES_FROM_EMAIL` | Yes for emails | Verified-in-SES sender (e.g. `noreply@kitlabs.us`). |
+   | `ADMIN_PASSWORD` | Yes for `/admin` | Shared admin password (HMAC'd into the session cookie). |
+   | `NEXT_PUBLIC_SITE_URL` | Recommended | Used by OG image and share URLs. |
+   | `AWS_REGION` | Auto | Amplify usually injects this; override only if your AWS resources are in a different region. |
+
+5. **Save and deploy.** Every push to `main` auto-deploys.
 6. _(Optional)_ Add a custom domain under _App settings → Custom domains_.
-   ACM certificate + HTTPS are free.
 
-### DynamoDB setup (one-time, for Scan-to-phone + future SMS/email)
+> **Reminder:** when you add a *new* server-side env var, also append a
+> line to the `.env.production` block in [`amplify.yml`](amplify.yml) so
+> the SSR Lambda sees it at runtime. Forgetting this is the most common
+> "env var is set but the app says it isn't" pitfall.
 
-The public card page at `/c/[id]` reads session rows from DynamoDB.
+### AWS resource setup (one-time)
 
-1. **Create the table** in the DynamoDB console (or via the AWS CLI):
-   - Name: `digital-card-kiosk-sessions`
-   - Partition key: `id` (String)
-   - Capacity mode: **On-demand** (cheapest at low traffic; scales to zero)
-   - Once the table is _Active_, open it → _Additional settings_ → _Time to
-     live (TTL)_ → enable, attribute name `expiresAt`. Sessions are saved
-     with a 30-day TTL by default.
-2. **Grant the Amplify SSR Lambda access.** Find the role under IAM that
-   Amplify created for SSR (named like
-   `amplifyconsole-backend-ServiceRole-…`) and attach an inline policy:
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": ["dynamodb:GetItem", "dynamodb:PutItem"],
-         "Resource": "arn:aws:dynamodb:us-east-1:ACCOUNT_ID:table/digital-card-kiosk-sessions"
-       }
-     ]
-   }
-   ```
-3. **Set `DYNAMODB_TABLE`** in Amplify env vars (step 4 above) and
-   redeploy.
+#### DynamoDB
 
-The kiosk's `/api/sessions` route handler returns 503 with a clear
-message until both pieces (table + IAM) are in place, so partial setup
-is safe to ship.
+Two tables, both with partition key `id` (String) and TTL attribute
+`expiresAt`, on-demand billing:
 
-### S3 setup (one-time, for storing captured photos)
+- **Cards table** — `digital-card-kiosk-sessions` (or whatever
+  `DYNAMODB_TABLE` is set to).
+- **Reviews table** — `digital-card-kiosk-reviews` (or whatever
+  `DYNAMODB_REVIEWS_TABLE` is set to).
 
-DynamoDB items max out at 400 KB. To dodge that ceiling and keep photos
-as proper binary objects (preserving PNG transparency for bg-removed
-shots), the `/api/sessions` route uploads each photo to S3 and saves
-only the URL in DynamoDB.
+After creating each, enable TTL (Additional settings → Time to live →
+attribute name `expiresAt`).
 
-1. **Create the bucket** (S3 console or CLI):
-   - Name: `digital-card-kiosk-photos` (or any name; set the env var to
-     match)
-   - Region: same as the SSR Lambda for fastest PUTs
-   - **Block Public Access**: uncheck _Block all public access_ (we
-     need the bucket to serve photos directly to phones via the public
-     card page)
-2. **Bucket policy** for public-read on the `photos/` prefix:
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [{
-       "Sid": "PublicReadPhotos",
-       "Effect": "Allow",
-       "Principal": "*",
-       "Action": "s3:GetObject",
-       "Resource": "arn:aws:s3:::digital-card-kiosk-photos/photos/*"
-     }]
-   }
-   ```
-   Security model is "anyone with the random sessionId can see the
-   photo" — same as the public card page at `/c/[id]`.
-3. **Lifecycle rule** to auto-delete after 30 days, matching the
-   DynamoDB TTL: _Management → Lifecycle rules → Create_, scope to
-   prefix `photos/`, expire current versions after 30 days.
-4. **Grant the SSR Lambda `s3:PutObject` permission** by extending
-   the inline IAM policy:
-   ```json
-   {
-     "Effect": "Allow",
-     "Action": ["s3:PutObject"],
-     "Resource": "arn:aws:s3:::digital-card-kiosk-photos/photos/*"
-   }
-   ```
-5. **Set `S3_PHOTO_BUCKET`** in Amplify env vars and redeploy.
+#### S3
 
-### SES setup (one-time, for the "Email me" button)
+Two buckets, both in the same region as `AWS_REGION`:
 
-1. **Verify the sender** — SES console → _Verified identities_ →
-   _Create identity_. Either verify a single email (e.g.
-   `noreply@kitlabs.us`) or, better, verify the whole domain so any
-   address on it works (DKIM records get added to your DNS).
-2. **Request production access** if you want to email arbitrary
-   recipients. The SES sandbox lets you only send to verified
-   addresses — fine for testing, blocks real customers. Use the
-   _Account dashboard → Request production access_ form; usually
-   approved in under 24 h.
-3. **Set `SES_FROM_EMAIL`** in Amplify env vars to that verified
-   address.
-4. **Grant the SSR Lambda `ses:SendRawEmail` permission** by
-   extending the inline IAM policy from above:
-   ```json
-   {
-     "Effect": "Allow",
-     "Action": ["ses:SendRawEmail"],
-     "Resource": "*"
-   }
-   ```
+- **Photos bucket** (`S3_PHOTO_BUCKET`) — public-read on the
+  `photos/*` prefix so the public card page at `/c/[id]` can render
+  them. Lifecycle rule expiring `photos/` after 30 days is a good
+  match for the DynamoDB TTL.
+- **Reviews bucket** (`S3_REVIEW_BUCKET`) — needs **CORS allowing
+  `PUT`** from the kiosk origin (the client uploads directly via
+  presigned URL) and a public-read policy on `reviews/*` so the
+  emailed playback link works.
 
-### SNS setup (one-time, for the "Text me the link" button)
+#### IAM (the Amplify SSR compute role)
 
-1. **Leave the SMS sandbox.** SNS → _Mobile → Text messaging (SMS) →
-   Sandbox destination phone numbers_. Either verify the phone
-   numbers you'll test from, or _Request production access_ via the
-   _Origination numbers_ workflow — same idea as SES.
-2. **No env var to set** — SNS publishes directly to a phone number
-   so there's nothing to configure beyond IAM.
-3. **Grant the SSR Lambda `sns:Publish` permission**:
-   ```json
-   {
-     "Effect": "Allow",
-     "Action": ["sns:Publish"],
-     "Resource": "*"
-   }
-   ```
-4. (Optional) Set a custom Sender ID or Origination Number in SNS if
-   you want SMS to come from "DIGICARD" instead of an Amazon pool
-   number — costs vary by country and isn't supported in the US.
+The SSR Lambda runs under a role like `digital-card-kiosk-compute-role`.
+Attach an inline policy granting:
 
-US SMS via SNS is **~$0.0075 per message**. Email via SES is
-**~$0.10 per 1,000 messages**. Both are well within "rounding error"
-for kiosk volume.
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:ACCOUNT_ID:table/digital-card-kiosk-sessions",
+        "arn:aws:dynamodb:us-east-1:ACCOUNT_ID:table/digital-card-kiosk-reviews"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::digital-card-kiosk-photos/photos/*",
+        "arn:aws:s3:::digital-card-kiosk-reviews/reviews/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ses:SendRawEmail", "ses:SendEmail"],
+      "Resource": "*"
+    }
+  ]
+}
+```
 
-Camera, OCR, and QR decoding all need HTTPS — Amplify provides it by default
-on both the auto-generated `*.amplifyapp.com` URL and any custom domain.
+`dynamodb:Scan` is required by the admin dashboard to list cards/reviews.
+`s3:GetObject` on photos is required by the admin card detail page to
+inline the photo as a data URL for the html2canvas capture.
 
-## Tech stack
+#### SES
 
-| Concern | Choice |
-|---|---|
-| Framework | Next.js 16 App Router (client-rendered single page, Turbopack) |
-| Language | TypeScript (strict) |
-| Styling | Tailwind v4 (`@theme inline` tokens, CSS container queries) |
-| State | `zustand` (one wizard store) |
-| Animation | `framer-motion` |
-| Icons | `lucide-react` |
-| Camera | `react-webcam` |
-| OCR | `tesseract.js` (dynamic-imported on first scan) |
-| QR decode | `@zxing/browser` |
-| QR encode | `qrcode.react` |
+1. Verify the sender domain or address (SES → Verified identities). Use
+   the verified address as `SES_FROM_EMAIL`.
+2. **Request production access** (Account dashboard → Request production
+   access) to send to non-verified addresses. Sandbox mode caps you at
+   200 emails/day, 1/sec, recipients-must-be-verified — fine for
+   testing, blocks real customers.
+
+The kiosk auto-emails the card on share, attaching both a PNG snapshot
+and a `.vcf`. Email payload is well under the 10 MB SES limit (typical
+~600 KB).
+
+---
 
 ## Project structure
 
 ```
 app/
-  layout.tsx       kiosk viewport / metadata
-  page.tsx         step switcher + sticky progress pills + step nav
-  globals.css      theme tokens, keyframes, glass/shimmer
+  layout.tsx                root viewport / metadata
+  page.tsx                  card builder (Photo / Details / Style / Share)
+  globals.css               theme tokens, keyframes, glass/shimmer
+  c/[id]/page.tsx           public card landing
+  reviews/page.tsx          video review flow
+  admin/
+    layout.tsx              auth gate (LoginForm or AdminShell)
+    page.tsx                Cards / Reviews tabs + count tiles + tables
+    cards/[id]/page.tsx     card detail with rendered preview + send-with-PNG
+    reviews/[id]/page.tsx   review detail with embedded player + send
+  api/
+    sessions/               cards CRUD (DynamoDB + S3 + SES)
+    reviews/                review presigned upload + email
+    admin/                  admin endpoints (login/logout + cards/reviews list/detail/email)
+    enhance/                AI studio polish (Gemini)
+    extract-card/           AI card-data extraction (Gemini)
 
 components/
-  marketing-slot.tsx           bottom 50 % ad/video placeholder
-  ui.tsx                       shared buttons, inputs, segmented control
-  sections/
-    section-frame.tsx          numbered badge + title + idle/active/done
-    photo-section.tsx          step 1 — live card + capture
-    personalize-section.tsx    step 2 — idle / scanning / form modes
-    build-section.tsx          step 3 — pick + build animation
-    share-section.tsx          step 4 — card + scan / sms / email
-  scanners/
-    unified-scanner.tsx        ZXing continuous QR + Tesseract capture
-  forms/details-form.tsx       6-field form bound to store
-  templates/card-templates.tsx all six designs + shared PhotoFrame / QR
+  ui.tsx                          shared buttons, inputs, segmented control
+  marketing-slot.tsx              bottom 50% promo video
+  template-picker.tsx             step-1 popover for choosing default template
+  orientation-pills.tsx           step-1 landscape/portrait toggle
+  size-pills.tsx                  step-1 S/M/L preview size
+  camera-picker.tsx               header gear, persisted device id
+  ai-polish-menu.tsx              AI studio polish style picker
+  sections/                       photo / personalize / build / share + frame
+  scanners/                       unified scanner (OCR + QR)
+  forms/details-form.tsx          legacy form (kept for the scan-result merge)
+  templates/card-templates.tsx    all six designs + shared PhotoFrame / QR
+  reviews/                        intro-form / recorder / playback / done /
+                                   question-overlay / lower-third
+  admin/                          login-form / admin-shell / resend-email
 
 lib/
-  store.ts          zustand store (step, photo, details, template, session)
-  types.ts          CardDetails, TemplateId, Orientation, section constants
-  fake-data.ts      FAKE_CARD placeholder + withFallback merger
-  vcard.ts          buildVcard(details, sessionId)
-  parse-card.ts     OCR-text + vCard + MECARD parsers
-  mock-backend.ts   mockCreateSession / mockSendEmail / mockSendSms
+  store.ts                        zustand wizard store
+  review-store.ts                 zustand reviews store
+  types.ts                        CardDetails, TemplateId, FACTORY_DEFAULT_TEMPLATE
+  review-questions.ts             review question config + durations
+  fake-data.ts                    FAKE_CARD + withFallback merger
+  vcard.ts                        buildVcard(details, sessionId)
+  parse-card.ts                   OCR + vCard / MECARD parsers
+  mock-backend.ts                 client-side API helpers (historical naming)
+  s3.ts                           uploadPhoto + presignReviewUpload
+  db.ts                           saveSession / getSession / listSessions
+                                   + saveReview / getReview / listReviews
+  admin-auth.ts                   HMAC cookie session helpers
+
+public/
+  DigitalCardPromo.mp4            bundled marketing video
 
 docs/
-  BRD.md            business requirements
-  TRD.md            technical requirements + API contract
-  screenshots/      README assets
+  BRD.md                          business requirements
+  TRD.md                          technical requirements + API contract
+  screenshots/                    README assets
 ```
 
-## Backend integration
+---
 
-Right now the share actions are mocked in
-[`lib/mock-backend.ts`](lib/mock-backend.ts). Each function is a drop-in
-replacement boundary:
+## Tech stack
 
-| Mock function | Replace with |
+| Concern | Choice |
 |---|---|
-| `mockCreateSession` | `POST /sessions` → returns `{ url }` (public landing for the card) |
-| `mockSendEmail` | `POST /sessions/:id/email` with `{ email }` |
-| `mockSendSms` | `POST /sessions/:id/sms` with `{ phone }` |
+| Framework | Next.js 16 App Router (Turbopack) |
+| Language | TypeScript (strict) |
+| Styling | Tailwind v4 (`@theme inline` tokens, CSS container queries) |
+| State | `zustand` (separate stores: `useWizard` for cards, `useReview` for reviews) |
+| Animation | `framer-motion` |
+| Icons | `lucide-react` |
+| Camera | `react-webcam` + native `getUserMedia` (for `MediaRecorder` in `/reviews`) |
+| OCR | `tesseract.js` (dynamic-imported on first scan) |
+| QR decode | `@zxing/browser` |
+| QR encode | `qrcode.react` |
+| Card snapshot | `html2canvas` (lazy-loaded; PNG/JPEG depending on caller) |
+| Background removal | `@imgly/background-removal` (in-browser WebGPU/WASM) |
+| AI image polish | Google Gemini 2.5 Flash Image (server-side) |
+| AWS SDK | `@aws-sdk/client-{dynamodb,s3,ses,sns}`, `@aws-sdk/s3-request-presigner` |
 
-The scan-to-phone QR points at `${origin}/c/<sessionId>` — that public card
-page needs to be implemented on the backend side.
-
-Full API contract + retention / security notes are in [`docs/TRD.md`](docs/TRD.md) §6.
+---
 
 ## Runtime requirements
 
-- **HTTPS or localhost** for camera access.
-- Tesseract.js downloads wasm + English traineddata on first scan (~10 MB).
-  Plan to bundle `tessdata` locally before production.
-- Touch-first (no hover-only affordances). Zoom disabled, overscroll blocked.
-- Optimized for a **tall vertical display** (phone-proportioned, ~1080 × 1920+).
+- **HTTPS or localhost** for camera + microphone.
+- Tesseract.js downloads wasm + English traineddata on first scan
+  (~10 MB). Bundle locally before production for offline kiosks.
+- Touch-first (no hover-only affordances). Zoom disabled, overscroll
+  blocked, text-selection blocked except in admin (which opts out
+  inline).
+- Optimized for a **tall portrait display** (~1080 × 1920+) but
+  responsive enough to also work on a laptop.
+
+---
 
 ## Requirements docs
 
 - [`docs/BRD.md`](docs/BRD.md) — business requirements, goals, metrics, risks
-- [`docs/TRD.md`](docs/TRD.md) — technical design, data model, API contract,
-  testing strategy, BR ↔ TR traceability
+- [`docs/TRD.md`](docs/TRD.md) — technical design, data model, API contract
+- [`CHANGELOG.md`](CHANGELOG.md) — release history
 
 ## License
 

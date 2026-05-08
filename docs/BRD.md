@@ -4,26 +4,31 @@
 |---|---|
 | Project | Digital Card Kiosk |
 | Document owner | _TBD_ |
-| Status | Draft v0.2 |
-| Last updated | 2026-04-23 |
+| Status | v1.5 — shipped |
+| Last updated | 2026-05-08 |
+| Companion | [CHANGELOG.md](../CHANGELOG.md) for release-by-release detail |
 
 ---
 
 ## 1. Executive summary
 
-The Digital Card Kiosk is a self-service web application that lets a walk-up
-customer — at an event booth, showroom, reception desk, or conference stand —
-create a personalised digital business card and share it to their own phone or
-email in under one minute.
+The Digital Card Kiosk is a self-service web application deployed at event
+booths, showrooms, reception desks, and conference stands. It has three
+distinct surfaces:
 
-The customer takes a photo, provides their contact details (by scanning a
-physical card, scanning a QR code, or typing), picks one of two visual
-templates, and receives a shareable digital card. The kiosk resets
-automatically for the next user.
+1. **Card builder (`/`)** — walk-up customer creates a personalised
+   digital business card in under a minute. Photo + details + template +
+   share via QR or email.
+2. **Video reviews (`/reviews`)** — walk-up customer records a short
+   broadcast-style video review answering pre-defined questions. Result
+   uploads to S3 and the customer receives a playback link by email.
+3. **Admin dashboard (`/admin`)** — password-gated staff view of every
+   card and review with detail pages and a resend-email control.
 
-The app is delivered as a browser-based kiosk experience optimised for a
-**tall vertical display** (digital signage in portrait, phone-proportioned
-width).
+The customer-facing flows are delivered as a browser-based kiosk
+experience optimised for a **tall vertical display** (digital signage in
+portrait, phone-proportioned width). The admin dashboard works on any
+modern browser at any size.
 
 ---
 
@@ -136,12 +141,58 @@ IDs use the prefix **BR-** (business requirement).
 ### 4.5 Section 4 — Share
 - **BR-40** The app SHALL display a QR code the user can scan with their
   phone to retrieve the card.
-- **BR-41** The app SHALL accept an email address and email the card to the
-  user.
+- **BR-41** The app SHALL automatically email the card to the address
+  captured in step 2 the moment the share link is ready, without
+  requiring an additional button press.
+- **BR-41a** The email SHALL contain: a personalised greeting, the
+  rendered card image inline (so the email itself looks like the card),
+  a downloadable PNG/JPEG attachment of the card, a `.vcf` (vCard)
+  attachment, and a "View on web" button linking to the public card
+  page.
+- **BR-41b** A secondary form SHALL be available so the customer can
+  send the card to a different address (e.g. a colleague).
 - **BR-42** Successful sharing SHALL provide a clear, celebratory
   confirmation.
 - **BR-43** After successful sharing, the app SHALL auto-reset within a
   configurable timeout (default 25 seconds).
+- **BR-44** The user SHALL be able to **change the chosen template
+  without losing photo or details**.
+- **BR-45** The user SHALL be able to **clear the session entirely**
+  (wiping photo, details, and card from the kiosk) with a single
+  action, intended for customers who want to walk away mid-flow.
+
+### 4.6 Video reviews (`/reviews`)
+- **BR-70** The app SHALL provide a separate route where the customer
+  records a video review answering a configurable list of questions.
+- **BR-71** The customer SHALL provide their name, title, and email
+  before recording starts.
+- **BR-72** The recording UI SHALL display, over the live video:
+  step-position pips, the current question with a countdown ring, an
+  "Up next" preview of the next question, and a broadcast-style
+  lower-third overlay showing the recorder's name + title + a LIVE
+  badge.
+- **BR-73** The customer SHALL be able to advance to the next question
+  before the timer expires, and SHALL be able to stop recording early.
+- **BR-74** After recording, the customer SHALL be able to play back
+  the video and either retake or submit.
+- **BR-75** On submit, the video SHALL be uploaded to object storage
+  and the customer SHALL receive a confirmation email with a playback
+  link.
+
+### 4.7 Admin dashboard (`/admin`)
+- **BR-80** The admin route SHALL require authentication via a shared
+  password.
+- **BR-81** The dashboard SHALL show a count tile and list view for
+  both cards and reviews, with newest first.
+- **BR-82** Each list row SHALL link to a detail page.
+- **BR-83** The card detail page SHALL render the actual card the
+  customer designed (template + photo + QR), alongside a data grid.
+- **BR-84** The card detail page SHALL provide a "Resend email" form
+  that emails the rendered card (as an inline image and a downloadable
+  attachment) to the address on file or to an alternate address typed
+  by the operator.
+- **BR-85** The review detail page SHALL embed the recorded video and
+  provide the same resend-email control.
 
 ### 4.6 Kiosk behaviour
 - **BR-50** The UI SHALL be optimised for touch on a tall portrait display
@@ -203,19 +254,48 @@ IDs use the prefix **BR-** (business requirement).
 
 ## 9. Release plan
 
-- **v1.0 (MVP)** — Single-page flow with mocked backend (current state).
-- **v1.1** — Real backend wired up, public card page `/c/[id]`, idle-reset on
-  all sections, analytics events.
-- **v1.2** — Operator lock, basic admin dashboard for session counts.
-- **v2.0** — Multi-tenant branding, additional templates toggleable per
-  deployment, multi-language, CRM webhook.
+See [CHANGELOG.md](../CHANGELOG.md) for full per-release detail.
+
+- **v1.0 (MVP)** — _Shipped._ Single-page flow with mocked backend.
+- **v1.1** — _Shipped._ Real backend wired up (DynamoDB + S3 + SES +
+  SNS), public card page `/c/[id]`, AI features (studio polish + card
+  extraction).
+- **v1.2** — _Shipped 2026-05-04._ Reviews video flow, admin dashboard,
+  step-1 template picker, step-2 inline editing, template-truncation
+  fixes, default portrait template flipped to Noir, SMS share removed.
+- **v1.3** — _Shipped 2026-05-05._ Auto-email on share with the
+  customer's email from step 2; rendered-card PNG snapshot attached.
+  amplify.yml env-var bridge.
+- **v1.4** — _Shipped 2026-05-07._ Steps 3 + 4 merged into a single
+  Card-and-share screen. Mono and Neon redesigned as QR-first cards.
+  Email body redesigned (light theme, personalized greeting, inline
+  card image). Email payload trimmed for SES/Lambda limits. Promo
+  video bundled with the app.
+- **v1.5** — _Shipped 2026-05-08._ Admin card detail renders the
+  actual designed card preview; resend-email captures and attaches
+  the PNG snapshot.
+- **v2.0 (proposed)** — Multi-tenant branding, additional templates
+  toggleable per deployment, multi-language, CRM webhook,
+  analytics events, idle-reset on all sections, operator PIN.
 
 ## 10. Open questions
 
-1. Branding — does each deployment need its own theme, or is there one brand?
-2. What email service will back `mockSendEmail`? (Postmark, SES, Resend?)
-3. Does the shared card live forever or expire (e.g. 30 days)?
-4. Is the user's photo stored server-side or only rendered at view time?
-5. Consent / privacy copy — legal review needed before production.
-6. Should the Mono template be exposed alongside Aurora/Neon, or held for a
-   later release?
+1. Branding — does each deployment need its own theme, or is there one
+   brand? (Currently one — KitLabs.)
+2. ~~What email service will back `mockSendEmail`?~~ → AWS SES
+   (`SES_FROM_EMAIL`).
+3. ~~Does the shared card live forever or expire?~~ → 30-day TTL on
+   DynamoDB + matching S3 lifecycle.
+4. ~~Is the user's photo stored server-side?~~ → Yes, in
+   `S3_PHOTO_BUCKET` under `photos/<sessionId>.<ext>`, with a 30-day
+   lifecycle.
+5. Consent / privacy copy — legal review still needed before
+   distribution outside KitLabs.
+6. ~~Should the Mono template be exposed?~~ → All six templates are
+   now exposed in the picker.
+7. The video review flow accumulates personal video data — retention
+   policy needs explicit legal sign-off (currently 30 days, matching
+   cards).
+8. Admin auth is a single shared password — fine for kiosk demos, not
+   fine for multi-staff production. Multi-user with audit log is a v2
+   item.

@@ -4,63 +4,75 @@
 |---|---|
 | Project | Digital Card Kiosk |
 | Document owner | _TBD_ |
-| Status | Draft v0.2 |
-| Last updated | 2026-04-23 |
-| Companion doc | [BRD.md](BRD.md) |
+| Status | v1.5 — shipped |
+| Last updated | 2026-05-08 |
+| Companion doc | [BRD.md](BRD.md) · [CHANGELOG.md](../CHANGELOG.md) |
 
 ---
 
 ## 1. Scope
 
-This TRD defines the technical design of the Digital Card Kiosk **frontend**.
-Backend design is included as an interface contract (§6) to be implemented by
-a separate service.
-
-v0.2 replaces the wizard model of v0.1 with a single-page, progressively
-revealed, section-driven model — see §5.1.
+This TRD defines the technical design of the entire Digital Card Kiosk —
+**both** the kiosk-customer surfaces (`/` card builder, `/reviews` video
+review) and the operator surface (`/admin` dashboard). The backend lives
+in the same repository as Next.js route handlers backed by AWS managed
+services (DynamoDB, S3, SES, SNS, Bedrock-via-Gemini). §6 documents the
+HTTP contract.
 
 ---
 
 ## 2. Architecture overview
 
 ```
-┌─────────── Target display (tall portrait, ~480 px wide, browser) ───────────┐
+┌─── Browser (kiosk display or admin laptop) ─────────────────────────────────┐
 │                                                                             │
-│   Next.js 16 App Router (client-rendered single page)                       │
-│   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │  app/page.tsx  (sticky header + 4-dot progress rail)                 │  │
-│   │   ├─ PhotoSection        [1] Start here                              │  │
-│   │   ├─ PersonalizeSection  [2] Make it yours                           │  │
-│   │   │    ├─ 2× TemplateCard (live preview; fake data via withFallback) │  │
-│   │   │    └─ SegmentedControl → CardScanner | QRScanner | DetailsForm   │  │
-│   │   ├─ BuildSection        [3] Pick your style                         │  │
-│   │   │    └─ 2× TemplateCard → tap → build animation → done             │  │
-│   │   └─ ShareSection        [4] Take it with you                        │  │
-│   │        ├─ final TemplateCard                                         │  │
-│   │        ├─ Scan-to-phone QR (mockCreateSession URL)                   │  │
-│   │        └─ Email form      (mockSendEmail)                            │  │
-│   └──────────────────────────────────────────────────────────────────────┘  │
-│                             │                                               │
-│                             ▼                                               │
-│                     zustand store (useWizard)                               │
-│      photoDataUrl · details · template?·sessionId · ensureSession           │
+│  Next.js 16 App Router · Turbopack · React 19 · Tailwind v4                 │
+│                                                                             │
+│  ┌── Customer surfaces ──────────────────────────────────────────────────┐  │
+│  │  /                     Card builder (Photo→Details→Card+Share)       │  │
+│  │  /reviews              Video review (Intro→Recording→Playback→Done)  │  │
+│  │  /c/[id]               Public card landing                           │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  ┌── Operator surface ──────────────────────────────────────────────────┐   │
+│  │  /admin                Cards / Reviews tabs (count + list)           │   │
+│  │  /admin/cards/[id]     Live card preview + resend (with PNG)         │   │
+│  │  /admin/reviews/[id]   Video player + resend                         │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  zustand stores: useWizard (cards) · useReview (videos)                     │
 └─────────────────────────────────────────────────────────────────────────────┘
                               │
-                    fetch / HTTPS (v1.1+)
+                              ▼  HTTPS
+┌─── AWS Amplify SSR Lambda (server) ─────────────────────────────────────────┐
+│                                                                             │
+│  /api/sessions (POST)             save card row + upload photo to S3        │
+│  /api/sessions/[id]/email (POST)  SES sendRawEmail (vCard + PNG inline)     │
+│  /api/sessions/[id]/sms   (POST)  SNS publish (currently no UI)             │
+│  /api/reviews             (POST)  presign S3 PUT for review video           │
+│  /api/reviews/[id]/email  (POST)  SES sendEmail + persist review row        │
+│  /api/admin/login         (POST)  HMAC-cookie auth                          │
+│  /api/admin/logout        (POST)                                            │
+│  /api/admin/cards         (GET)   listSessions (Scan)                       │
+│  /api/admin/cards/[id]    (GET)   getSession + inline photo as data URL     │
+│  /api/admin/cards/[id]/email (POST)  proxy to /api/sessions/.../email       │
+│  /api/admin/reviews       (GET)   listReviews (Scan)                        │
+│  /api/admin/reviews/[id]  (GET)   getReview                                 │
+│  /api/admin/reviews/[id]/email (POST) proxy to /api/reviews/.../email       │
+│  /api/enhance             (POST)  Gemini AI studio polish                   │
+│  /api/extract-card        (POST)  Gemini AI card-data extraction            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              │
                               ▼
-              ┌────────────────────────────────┐
-              │    Backend API                 │  ← not built in this repo
-              │  - POST /sessions              │
-              │  - POST /sessions/:id/email    │
-              │  - GET  /c/:id (public)        │
-              └────────────────────────────────┘
+        DynamoDB (sessions + reviews) · S3 (photos + reviews) ·
+        SES (transactional email) · SNS (SMS) · Gemini API (AI)
 ```
 
-The page is one continuous vertical scroll. The "active" section is
-**derived** from store state rather than held as an explicit step index.
-
-All camera input, OCR, and QR decoding happen **on device**. No photo leaves
-the kiosk unless the user explicitly shares.
+All camera input, OCR, and QR decoding happen **on device**. The card
+PNG snapshot is also captured client-side via `html2canvas`. The
+customer's email is fired automatically the moment the share link is
+ready — no extra button-press.
 
 ---
 
@@ -134,10 +146,40 @@ Every template renders a QR whose payload is a vCard 3.0 string built by
 included for later backend correlation.
 
 ### 4.6 Exposed templates
-`PAGE_TEMPLATES = ["aurora", "neon"]` in [lib/types.ts](../lib/types.ts). The
-Mono template is retained in
-[components/templates/card-templates.tsx](../components/templates/card-templates.tsx)
-for future toggling but is not rendered by the page.
+`PAGE_TEMPLATES` exposes all six designs:
+`["aurora", "mono", "sunset", "neon", "forest", "noir"]`.
+`FACTORY_DEFAULT_TEMPLATE` is `"aurora"` — the target of the
+"Reset to default" action in the step-1 template picker.
+
+Aurora and Sunset use a **wide-name** layout: photo on the left, name
+spans the full right side, title/company/contact + QR share the row
+below. Mono and Neon are **QR-first** — large QR + name only, no photo
+or contact rows. Forest and Noir keep the more traditional photo +
+identity + contact stack.
+
+### 4.7 Inline-editable templates
+`TemplateProps` now accepts an optional `onEdit?: (patch:
+Partial<CardDetails>) => void` callback. When provided, the receiving
+template renders text fields as inline `EditableInput` elements
+(transparent bg with a `bg-white/10` highlight) instead of plain text.
+**Aurora honours `onEdit`**; the others fall back to read-only text.
+Step 2 (`PersonalizeSection`) passes `setDetails` from the wizard
+store as the `onEdit` so each keystroke updates the store and live
+re-renders the card.
+
+### 4.8 Review record — [lib/db.ts](../lib/db.ts)
+```ts
+type ReviewRecord = {
+  id: string;            // matches the S3 object key prefix
+  name: string;
+  title: string | null;
+  email: string;
+  videoUrl: string;      // public S3 URL
+  videoMimeType: string;
+  createdAt: number;     // unix seconds
+  expiresAt: number;     // unix seconds (DynamoDB TTL attribute)
+};
+```
 
 ---
 
@@ -221,51 +263,117 @@ IDs use the prefix **TR-** (technical requirement).
 
 ---
 
-## 6. Backend interface contract (for the team implementing the service)
+## 6. HTTP contract
 
-The frontend talks to the backend through a thin layer in
-[lib/mock-backend.ts](../lib/mock-backend.ts). Each `mock*` function maps 1:1
-to the real API call to be implemented.
+All routes are Next.js route handlers under `app/api/*` running in the
+Amplify SSR Lambda. Auth-gated routes return `401` when the
+`admin_session` cookie is missing or invalid. Every route returns 503
+with a clear error message when its required env vars aren't set, so
+partial deploys are safe.
 
-### 6.1 `POST /sessions`
-Create a shareable card session.
+### 6.1 `POST /api/sessions`
+Save a card session. Uploads `photoDataUrl` to S3 if it's a base64 data
+URL, stores the URL on the row.
 
-**Request body**
+**Request**
 ```ts
 {
-  sessionId: string;        // client-generated; server may accept or re-issue
+  sessionId: string;
   details: CardDetails;
-  template: "aurora" | "mono" | "neon";
-  photoDataUrl: string | null;  // base64; server should transcode + store
+  template: TemplateId;
+  photoDataUrl: string | null;
 }
 ```
-**Response**
+**Response** — `{ url: string }` (public short URL `/c/<id>`).
+
+### 6.2 `POST /api/sessions/[id]/email`
+Send the card by email via SES `SendRawEmail`. Builds a
+`multipart/mixed → multipart/related` MIME message with text + HTML +
+inline card image (cid) + vCard attachment.
+
+**Request**
 ```ts
-{ url: string }  // public short URL, e.g. https://card.example/c/abc123
+{
+  email: string;
+  cardImageDataUrl?: string | null;  // image/jpeg or image/png data URL
+}
 ```
+**Response** — `{ ok: true }` or `4xx`/`5xx` with `{ error }`.
+Pre-flight rejects raw messages over 9.5 MB with `413`.
 
-### 6.2 `POST /sessions/:id/email`
-Send the card by email.
+### 6.3 `POST /api/sessions/[id]/sms`
+Currently in the codebase but not wired to any UI (SMS share was
+removed in v1.2). Kept available behind the proper IAM if the SMS
+share returns.
 
-**Request body**
+### 6.4 `POST /api/reviews`
+Create a review session. Returns a presigned PUT URL the client uses
+to upload the recorded video directly to `S3_REVIEW_BUCKET`.
+
+**Request**
 ```ts
-{ email: string }
+{ sessionId: string; contentType: "video/webm" | "video/mp4" | "video/quicktime" }
 ```
-**Response** — `{ ok: true }` on success; non-2xx with an error message
-otherwise.
+**Response** — `{ uploadUrl: string; objectUrl: string; key: string }`.
 
-### 6.3 `GET /c/:id` (public landing)
-Serves a branded page that renders the chosen template and offers "Save to
-Contacts" (vCard download) and a back-link to the kiosk brand. Rate-limit and
-expiry policy TBD.
+### 6.5 `POST /api/reviews/[id]/email`
+Send the review confirmation email (with playback link). Persists a
+`ReviewRecord` row best-effort after SES success so admin can list it.
 
-### 6.4 Security
-- Enforce HTTPS.
-- Rate limit per IP on both POST endpoints.
+**Request**
+```ts
+{
+  email: string;
+  name?: string;
+  title?: string;
+  videoUrl: string;
+  videoMimeType: string;
+}
+```
+**Response** — `{ ok: true }`.
+
+### 6.6 `GET /c/[id]` (public landing)
+Server-rendered page (`app/c/[id]/page.tsx`). Renders the chosen
+template with the customer's data and a "Save to Contacts" button that
+serves the vCard as a data URL download.
+
+### 6.7 Admin auth
+- `POST /api/admin/login` — `{ password }` → sets HttpOnly +
+  SameSite=Strict cookie containing
+  `HMAC_SHA256(ADMIN_PASSWORD, "admin-session")`. 12-hour TTL.
+- `POST /api/admin/logout` — clears the cookie.
+
+### 6.8 Admin endpoints
+All gated by the `admin_session` cookie.
+
+- `GET /api/admin/cards` — list all sessions (DynamoDB `Scan`).
+  Strips `photoDataUrl` from each row to keep the payload small.
+  Returns `{ count, items: ListItem[] }`.
+- `GET /api/admin/cards/[id]` — full record. **Photo is inlined as a
+  base64 data URL** (the server fetches the S3 object) so the admin
+  client can capture the rendered card via html2canvas without S3
+  CORS configuration.
+- `POST /api/admin/cards/[id]/email` — `{ email?, cardImageDataUrl? }`
+  proxies to `/api/sessions/[id]/email`. The `email` defaults to the
+  card's own; the `cardImageDataUrl`, when supplied by the admin
+  client, is forwarded as the email's PNG attachment.
+- `GET /api/admin/reviews`, `GET /api/admin/reviews/[id]`,
+  `POST /api/admin/reviews/[id]/email` — same shape but for the
+  reviews table.
+
+### 6.9 AI helper endpoints
+- `POST /api/enhance` — `{ image, style? }` → `{ image }`.
+  Server-side call to Gemini 2.5 Flash Image.
+- `POST /api/extract-card` — `{ image }` → `{ details: Partial<CardDetails> }`.
+
+### 6.10 Security
+- Enforce HTTPS (Amplify default).
 - Validate `email` authoritatively server-side.
-- Strip EXIF from photo on upload.
-- Images and details should have a retention policy (default: 30 days, TBD
-  with legal).
+- Strip EXIF from photo on upload (TODO; not yet implemented).
+- 30-day retention on cards (DynamoDB TTL + S3 lifecycle) and
+  reviews. The cookie-bearing admin password is the only secret;
+  everything else is per-session and ephemeral.
+- Rate limit per IP on POST endpoints — TODO.
 
 ---
 
