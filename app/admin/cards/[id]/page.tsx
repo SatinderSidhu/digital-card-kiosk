@@ -46,8 +46,12 @@ export default function CardDetailPage() {
     })();
   }, [id]);
 
-  // Lazy-loaded html2canvas snapshot; PNG so the email recipient gets a
-  // crisp, save-to-photos-grade image rather than a JPEG with artifacts.
+  // Lazy-loaded html2canvas snapshot. JPEG @ 0.85 (was PNG) — admin
+  // resends were 500-ing on the SSR Lambda because the PNG payload
+  // (2-4 MB binary, 3-5 MB base64) plus the proxy hop pushed past
+  // the 6 MB sync request limit and OOM'd the function. The recipient
+  // still tap-and-saves to phone identically; JPEG vs PNG is
+  // imperceptible at email-display sizes.
   const captureCard = async (): Promise<string | null> => {
     if (!cardCaptureRef.current) return null;
     try {
@@ -58,7 +62,7 @@ export default function CardDetailPage() {
         useCORS: true,
         logging: false,
       });
-      return canvas.toDataURL("image/png");
+      return canvas.toDataURL("image/jpeg", 0.85);
     } catch (err) {
       console.warn("[admin-card-capture] failed:", err);
       return null;
