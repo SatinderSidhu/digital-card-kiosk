@@ -6,7 +6,13 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 type Props = { params: Promise<{ id: string }> };
-type Body = { email?: string };
+type Body = {
+  email?: string;
+  /** Optional base64 data URL (image/png or image/jpeg). When provided
+   *  it's forwarded to the public email route to be attached + inlined
+   *  in the email body. */
+  cardImageDataUrl?: string | null;
+};
 
 /**
  * Admin-triggered resend. Delegates to the existing public email endpoint
@@ -52,7 +58,10 @@ export async function POST(req: Request, { params }: Props) {
   const res = await fetch(`${origin}/api/sessions/${id}/email`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: target }),
+    body: JSON.stringify({
+      email: target,
+      cardImageDataUrl: body.cardImageDataUrl ?? null,
+    }),
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return NextResponse.json(data, { status: res.status });

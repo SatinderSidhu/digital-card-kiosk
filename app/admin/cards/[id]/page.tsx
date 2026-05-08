@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import type { CardDetails, TemplateId } from "@/lib/types";
+import { TEMPLATE_ORIENTATION } from "@/lib/types";
+import { TemplateCard } from "@/components/templates/card-templates";
+import { buildVcard } from "@/lib/vcard";
 import { ResendEmail } from "@/components/admin/resend-email";
 
 type CardRecord = {
@@ -22,6 +25,11 @@ export default function CardDetailPage() {
   const [data, setData] = useState<CardRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Captured by html2canvas when the admin clicks Send. The photo on the
+  // record is inlined as a data URL by the API so the capture works
+  // without S3 CORS configuration.
+  const cardCaptureRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!id) return;
     void (async () => {
@@ -37,6 +45,25 @@ export default function CardDetailPage() {
       }
     })();
   }, [id]);
+
+  // Lazy-loaded html2canvas snapshot; PNG so the email recipient gets a
+  // crisp, save-to-photos-grade image rather than a JPEG with artifacts.
+  const captureCard = async (): Promise<string | null> => {
+    if (!cardCaptureRef.current) return null;
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(cardCaptureRef.current, {
+        backgroundColor: "#0b0f1a",
+        scale: 1,
+        useCORS: true,
+        logging: false,
+      });
+      return canvas.toDataURL("image/png");
+    } catch (err) {
+      console.warn("[admin-card-capture] failed:", err);
+      return null;
+    }
+  };
 
   if (error) {
     return (
@@ -56,6 +83,11 @@ export default function CardDetailPage() {
   const d = data.details;
   const created = new Date(data.createdAt * 1000);
   const expires = new Date(data.expiresAt * 1000);
+  const qrValue = buildVcard(d, data.id);
+  const orientation = TEMPLATE_ORIENTATION[data.template];
+  // Match the production /c/[id] sizing so the captured image is the same
+  // resolution the customer sees on their phone.
+  const cardMaxWidth = orientation === "portrait" ? 380 : 880;
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,50 +103,53 @@ export default function CardDetailPage() {
         </p>
       </div>
 
-      <div className="grid md:grid-cols-[1fr_320px] gap-6">
-        <div className="flex flex-col gap-4">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <h3 className="text-sm font-semibold mb-3">Details</h3>
-            <DetailGrid
-              rows={[
-                ["Full name", d.fullName],
-                ["Title", d.title],
-                ["Company", d.company],
-                ["Phone", d.phone],
-                ["Email", d.email],
-                ["Website", d.website],
-                ["Template", data.template],
-                ["Created", created.toLocaleString()],
-                ["Expires", expires.toLocaleString()],
-              ]}
-            />
-            <div className="mt-3 flex items-center gap-3 text-xs">
-              <Link
-                href={`/c/${data.id}`}
-                target="_blank"
-                className="inline-flex items-center gap-1 text-[#22d3ee] hover:underline"
-              >
-                Open public card <ExternalLink size={12} />
-              </Link>
-            </div>
-          </div>
+      {/* Hero: the actual rendered card the customer designed. */}
+      <div className="flex justify-center">
+        <div
+          ref={cardCaptureRef}
+          className="w-full"
+          style={{ maxWidth: `${cardMaxWidth}px` }}
+        >
+          <TemplateCard
+            template={data.template}
+            details={d}
+            photoDataUrl={data.photoDataUrl}
+            qrValue={qrValue}
+          />
+        </div>
+      </div>
 
-          {data.photoDataUrl && (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <h3 className="text-sm font-semibold mb-3">Photo</h3>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={data.photoDataUrl}
-                alt={d.fullName || "headshot"}
-                className="rounded-xl max-w-xs w-full"
-              />
-            </div>
-          )}
+      <div className="grid md:grid-cols-[1fr_320px] gap-6">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <h3 className="text-sm font-semibold mb-3">Details</h3>
+          <DetailGrid
+            rows={[
+              ["Full name", d.fullName],
+              ["Title", d.title],
+              ["Company", d.company],
+              ["Phone", d.phone],
+              ["Email", d.email],
+              ["Website", d.website],
+              ["Template", data.template],
+              ["Created", created.toLocaleString()],
+              ["Expires", expires.toLocaleString()],
+            ]}
+          />
+          <div className="mt-3 flex items-center gap-3 text-xs">
+            <Link
+              href={`/c/${data.id}`}
+              target="_blank"
+              className="inline-flex items-center gap-1 text-[#22d3ee] hover:underline"
+            >
+              Open public card <ExternalLink size={12} />
+            </Link>
+          </div>
         </div>
 
         <ResendEmail
           endpoint={`/api/admin/cards/${data.id}/email`}
           defaultEmail={d.email}
+          attachImage={captureCard}
         />
       </div>
     </div>

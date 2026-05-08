@@ -7,9 +7,14 @@ import { PrimaryButton, Field, TextInput } from "../ui";
 type Props = {
   endpoint: string;
   defaultEmail: string;
+  /** Optional getter, called right before the POST. The returned data URL
+   *  is sent as `cardImageDataUrl`, and the server attaches it to the
+   *  email. Used by the cards detail page to ship a fresh PNG snapshot
+   *  of the rendered card. */
+  attachImage?: () => Promise<string | null>;
 };
 
-export function ResendEmail({ endpoint, defaultEmail }: Props) {
+export function ResendEmail({ endpoint, defaultEmail, attachImage }: Props) {
   const [email, setEmail] = useState(defaultEmail);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,10 +30,18 @@ export function ResendEmail({ endpoint, defaultEmail }: Props) {
     }
     setSubmitting(true);
     try {
+      let cardImageDataUrl: string | null = null;
+      if (attachImage) {
+        try {
+          cardImageDataUrl = await attachImage();
+        } catch (err) {
+          console.warn("[resend] image capture failed:", err);
+        }
+      }
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, cardImageDataUrl }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -50,7 +63,9 @@ export function ResendEmail({ endpoint, defaultEmail }: Props) {
       <div>
         <h3 className="text-sm font-semibold">Resend email</h3>
         <p className="text-xs text-white/55 mt-0.5">
-          Sends the same email the customer received originally.
+          {attachImage
+            ? "Sends the card link, vCard, and a PNG of the rendered card the customer can save to their phone."
+            : "Sends the same email the customer received originally."}
         </p>
       </div>
 
