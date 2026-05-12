@@ -14,12 +14,16 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 type Props = { params: Promise<{ id: string }> };
+type EmailType = "card" | "followup";
 type Body = {
   email?: string;
-  /** Optional base64 PNG data URL — a snapshot of the rendered card. */
+  /** "card" (default) = the as-shared card email. "followup" = the
+   *  thank-you + share-tips + manage-your-card announcement. */
+  type?: EmailType;
+  /** Optional base64 image data URL — a fresh snapshot of the rendered
+   *  card. Uploaded to S3 and referenced by URL in the body. */
   cardImageDataUrl?: string | null;
 };
-
 
 function escapeHtml(s: string): string {
   return s
@@ -32,6 +36,185 @@ function escapeHtml(s: string): string {
 
 function safeFilename(s: string): string {
   return (s || "contact").replace(/[^a-z0-9]+/gi, "_");
+}
+
+const SHELL_OPEN = `<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f5f7fb;color:#0f172a;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px -12px rgba(15,23,42,0.12);">`;
+const SHELL_CLOSE = `      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+/** Inline card-image block (S3-hosted URL) or the styled-HTML fallback
+ *  when no snapshot exists yet. */
+function previewBlock(
+  cardImageUrl: string | null,
+  d: { fullName: string; title: string; company: string; phone: string; email: string; website: string },
+): string {
+  if (cardImageUrl) {
+    return `          <tr>
+            <td align="center" style="padding:20px 32px 6px;">
+              <a href="${escapeHtml(cardImageUrl)}" style="display:block;text-decoration:none;">
+                <img src="${escapeHtml(cardImageUrl)}" alt="${escapeHtml(d.fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:6px 32px 0;">
+              <a href="${escapeHtml(cardImageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">Save image to your phone →</a>
+            </td>
+          </tr>`;
+  }
+  return `          <tr>
+            <td style="padding:16px 32px 8px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:linear-gradient(135deg,#1e1b4b,#312e81 50%,#0c4a6e);border-radius:14px;color:#ffffff;">
+                <tr><td style="padding:24px 28px;color:#ffffff;">
+                  <p style="margin:0 0 4px;font-size:24px;font-weight:700;line-height:1.1;color:#ffffff;">${escapeHtml(d.fullName || "Your Name")}</p>
+                  <p style="margin:0 0 4px;font-size:15px;color:rgba(255,255,255,0.92);">${escapeHtml(d.title || "")}</p>
+                  <p style="margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.7);">${escapeHtml(d.company || "")}</p>
+                  <hr style="border:0;border-top:1px solid rgba(255,255,255,0.25);margin:0 0 14px;">
+                  ${d.phone ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">📞 ${escapeHtml(d.phone)}</p>` : ""}
+                  ${d.email ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">✉ ${escapeHtml(d.email)}</p>` : ""}
+                  ${d.website ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">🌐 ${escapeHtml(d.website)}</p>` : ""}
+                </td></tr>
+              </table>
+            </td>
+          </tr>`;
+}
+
+type BodyArgs = {
+  type: EmailType;
+  senderName: string;
+  greeting: string;
+  cardUrl: string;
+  manageUrl: string | null;
+  cardImageUrl: string | null;
+  details: { fullName: string; title: string; company: string; phone: string; email: string; website: string };
+};
+
+function buildEmailBody(a: BodyArgs): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const { type, senderName, greeting, cardUrl, manageUrl, cardImageUrl, details } = a;
+  const manageBtn = manageUrl
+    ? `          <tr>
+            <td align="center" style="padding:8px 32px 0;">
+              <a href="${escapeHtml(manageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">Manage your card — edit details, photo, or template →</a>
+            </td>
+          </tr>`
+    : "";
+  const viewBtn = `          <tr>
+            <td align="center" style="padding:20px 32px 4px;">
+              <a href="${escapeHtml(cardUrl)}" style="display:inline-block;background:#7c5cff;background-image:linear-gradient(135deg,#7c5cff 0%,#22d3ee 100%);color:#ffffff;padding:14px 36px;border-radius:9999px;text-decoration:none;font-weight:600;font-size:15px;">View on web</a>
+            </td>
+          </tr>`;
+
+  if (type === "followup") {
+    const subject = "Your digital card — share it and make it yours";
+    const html = `${SHELL_OPEN}
+          <tr>
+            <td style="padding:32px 32px 8px;">
+              <h1 style="margin:0 0 10px;font-size:22px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;">${escapeHtml(greeting)}</h1>
+              <p style="margin:0;font-size:15px;line-height:1.55;color:#475569;">
+                Thank you so much for creating your digital card! Here's a quick recap — plus, you can now <strong>manage and update it</strong> any time.
+              </p>
+            </td>
+          </tr>
+${previewBlock(cardImageUrl, details)}
+          <tr>
+            <td style="padding:22px 32px 6px;">
+              <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;">Share it with the world</p>
+              <p style="margin:0;font-size:14px;line-height:1.55;color:#475569;">
+                Your card lives at a permanent link you can share anywhere — drop it in your email signature, add the QR to your slides, or let people scan it at events.
+              </p>
+            </td>
+          </tr>
+${viewBtn}
+          <tr>
+            <td style="padding:22px 32px 6px;">
+              <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;">Make it yours</p>
+              <p style="margin:0;font-size:14px;line-height:1.55;color:#475569;">
+                You can now edit your card any time — update your name, title, company, phone, email, or website; swap to a different design; or re-take your photo (with AI studio polish if you want it).
+              </p>
+            </td>
+          </tr>
+${manageBtn}
+          <tr>
+            <td style="padding:16px 32px 28px;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
+                The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app.${manageUrl ? " Keep the manage link private — anyone with it can edit your card." : ""}
+              </p>
+            </td>
+          </tr>
+${SHELL_CLOSE}`;
+    const text = [
+      greeting,
+      "",
+      "Thank you so much for creating your digital card!",
+      "",
+      cardImageUrl ? `Card image: ${cardImageUrl}` : "",
+      "",
+      "SHARE IT WITH THE WORLD",
+      "Your card lives at a permanent link you can share anywhere:",
+      cardUrl,
+      "",
+      "MAKE IT YOURS",
+      "You can now edit your card any time — details, design, photo:",
+      manageUrl ? manageUrl : "(manage link unavailable)",
+      manageUrl ? "Keep this link private — anyone with it can edit your card." : "",
+      "",
+      "Attached: .vcf (contact).",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return { subject, html, text };
+  }
+
+  // type === "card"
+  const subject = `Your digital card${senderName !== "your digital card" ? `, ${senderName}` : ""}`;
+  const html = `${SHELL_OPEN}
+          <tr>
+            <td style="padding:32px 32px 12px;">
+              <h1 style="margin:0 0 10px;font-size:22px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;">${escapeHtml(greeting)}</h1>
+              <p style="margin:0;font-size:15px;line-height:1.55;color:#475569;">
+                Here's your digital card. Open it on the web for the QR and live links, or save the <strong>.vcf</strong> attachment to add yourself to anyone's Contacts in one tap.
+              </p>
+            </td>
+          </tr>
+${previewBlock(cardImageUrl, details)}
+${viewBtn}
+${manageBtn}
+          <tr>
+            <td style="padding:16px 32px 28px;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
+                The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app.${cardImageUrl ? " Tap the card image above to save it to your phone." : ""}${manageUrl ? " The manage link is private — anyone with it can edit your card." : ""}
+              </p>
+            </td>
+          </tr>
+${SHELL_CLOSE}`;
+  const text = [
+    greeting,
+    "",
+    "Here's your digital card. Open it on the web for the QR and live links,",
+    "or save the .vcf attachment to add yourself to anyone's Contacts.",
+    "",
+    `View on web: ${cardUrl}`,
+    cardImageUrl ? `Save the card image: ${cardImageUrl}` : "",
+    manageUrl ? `Manage your card (private link): ${manageUrl}` : "",
+    "",
+    "Attached: .vcf (contact).",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { subject, html, text };
 }
 
 export async function POST(req: Request, { params }: Props) {
@@ -66,6 +249,7 @@ export async function POST(req: Request, { params }: Props) {
       { status: 400 },
     );
   }
+  const emailType: EmailType = body.type === "followup" ? "followup" : "card";
 
   // Optional card snapshot. Accept JPEG (preferred — much smaller) or
   // PNG. We don't attach it to the email anymore — it gets uploaded to
@@ -106,7 +290,6 @@ export async function POST(req: Request, { params }: Props) {
     : null;
 
   const senderName = session.details.fullName || "your digital card";
-  const subject = `Your digital card${senderName !== "your digital card" ? `, ${senderName}` : ""}`;
   const vcard = buildVcard(session.details, id);
   const vcardFilename = `${safeFilename(session.details.fullName)}.vcf`;
 
@@ -135,98 +318,15 @@ export async function POST(req: Request, { params }: Props) {
     }
   }
 
-  const html = `<!doctype html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f5f7fb;color:#0f172a;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:32px 12px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px -12px rgba(15,23,42,0.12);">
-          <tr>
-            <td style="padding:32px 32px 12px;">
-              <h1 style="margin:0 0 10px;font-size:22px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;">${escapeHtml(greeting)}</h1>
-              <p style="margin:0;font-size:15px;line-height:1.55;color:#475569;">
-                Here's your digital card. Open it on the web for the QR and live links, or save the <strong>.vcf</strong> attachment to add yourself to anyone's Contacts in one tap.
-              </p>
-            </td>
-          </tr>
-${
-  cardImageUrl
-    ? `          <tr>
-            <td align="center" style="padding:20px 32px 8px;">
-              <a href="${escapeHtml(cardImageUrl)}" style="display:block;text-decoration:none;">
-                <img src="${escapeHtml(cardImageUrl)}" alt="${escapeHtml(d.fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
-              </a>
-            </td>
-          </tr>
-          <tr>
-            <td align="center" style="padding:8px 32px 0;">
-              <a href="${escapeHtml(cardImageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">
-                Save image to your phone →
-              </a>
-            </td>
-          </tr>`
-    : `          <tr>
-            <td style="padding:16px 32px 8px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:linear-gradient(135deg,#1e1b4b,#312e81 50%,#0c4a6e);border-radius:14px;color:#ffffff;">
-                <tr><td style="padding:24px 28px;color:#ffffff;">
-                  <p style="margin:0 0 4px;font-size:24px;font-weight:700;line-height:1.1;color:#ffffff;">${escapeHtml(d.fullName || "Your Name")}</p>
-                  <p style="margin:0 0 4px;font-size:15px;color:rgba(255,255,255,0.92);">${escapeHtml(d.title || "")}</p>
-                  <p style="margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.7);">${escapeHtml(d.company || "")}</p>
-                  <hr style="border:0;border-top:1px solid rgba(255,255,255,0.25);margin:0 0 14px;">
-                  ${d.phone ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">📞 ${escapeHtml(d.phone)}</p>` : ""}
-                  ${d.email ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">✉ ${escapeHtml(d.email)}</p>` : ""}
-                  ${d.website ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">🌐 ${escapeHtml(d.website)}</p>` : ""}
-                </td></tr>
-              </table>
-            </td>
-          </tr>`
-}
-          <tr>
-            <td align="center" style="padding:20px 32px 4px;">
-              <a href="${escapeHtml(cardUrl)}" style="display:inline-block;background:#7c5cff;background-image:linear-gradient(135deg,#7c5cff 0%,#22d3ee 100%);color:#ffffff;padding:14px 36px;border-radius:9999px;text-decoration:none;font-weight:600;font-size:15px;">View on web</a>
-            </td>
-          </tr>
-${
-  manageUrl
-    ? `          <tr>
-            <td align="center" style="padding:8px 32px 0;">
-              <a href="${escapeHtml(manageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">
-                Manage your card — edit details, photo, or template →
-              </a>
-            </td>
-          </tr>`
-    : ""
-}
-          <tr>
-            <td style="padding:16px 32px 28px;text-align:center;">
-              <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
-                The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app.${cardImageUrl ? " Tap the card image above to save it to your phone." : ""}${manageUrl ? " The manage link is private — anyone with it can edit your card." : ""}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-
-  const text = [
+  const { subject, html, text } = buildEmailBody({
+    type: emailType,
+    senderName,
     greeting,
-    "",
-    "Here's your digital card. Open it on the web for the QR and live links,",
-    "or save the .vcf attachment to add yourself to anyone's Contacts.",
-    "",
-    `View on web: ${cardUrl}`,
-    cardImageUrl ? `Save the card image: ${cardImageUrl}` : "",
-    manageUrl ? `Manage your card (private link): ${manageUrl}` : "",
-    "",
-    "Attached: .vcf (contact).",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    cardUrl,
+    manageUrl,
+    cardImageUrl,
+    details: d,
+  });
 
   // MIME shape: multipart/mixed → multipart/alternative + text/vcard.
   // The card image is hosted on S3 and referenced by URL in the HTML —

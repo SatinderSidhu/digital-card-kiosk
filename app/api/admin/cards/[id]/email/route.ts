@@ -8,9 +8,12 @@ export const maxDuration = 30;
 type Props = { params: Promise<{ id: string }> };
 type Body = {
   email?: string;
+  /** "card" (default) re-sends the as-shared card email; "followup"
+   *  sends the thank-you + share-tips + manage-your-card announcement. */
+  type?: "card" | "followup";
   /** Optional base64 data URL (image/png or image/jpeg). When provided
-   *  it's forwarded to the public email route to be attached + inlined
-   *  in the email body. */
+   *  it's forwarded to the public email route — uploaded to S3 and
+   *  referenced by URL in the body. */
   cardImageDataUrl?: string | null;
 };
 
@@ -60,6 +63,7 @@ export async function POST(req: Request, { params }: Props) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       email: target,
+      type: body.type === "followup" ? "followup" : "card",
       cardImageDataUrl: body.cardImageDataUrl ?? null,
     }),
   });

@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { CreditCard, Video, ChevronRight, Loader2 } from "lucide-react";
+import {
+  CreditCard,
+  Video,
+  ChevronRight,
+  Loader2,
+  Mail,
+  Check,
+  X,
+} from "lucide-react";
 import clsx from "clsx";
 
 type CardListItem = {
@@ -126,6 +134,7 @@ function CardsPanel() {
                 c.template,
                 relativeTime(c.createdAt),
               ],
+              action: c.email ? <FollowupButton id={c.id} /> : undefined,
             }))}
           />
         </div>
@@ -227,9 +236,13 @@ type Row = {
   key: string;
   href: string;
   cells: (string | number)[];
+  /** Optional per-row action (e.g. a "send follow-up email" button) —
+   *  rendered in its own cell before the drill-in chevron. */
+  action?: ReactNode;
 };
 
 function Table({ headers, rows }: { headers: string[]; rows: Row[] }) {
+  const hasActions = rows.some((r) => r.action != null);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -243,6 +256,7 @@ function Table({ headers, rows }: { headers: string[]; rows: Row[] }) {
                 {h}
               </th>
             ))}
+            {hasActions && <th className="w-10" />}
             <th className="w-10" />
           </tr>
         </thead>
@@ -259,6 +273,9 @@ function Table({ headers, rows }: { headers: string[]; rows: Row[] }) {
                   </Link>
                 </td>
               ))}
+              {hasActions && (
+                <td className="px-2 py-3 text-right">{r.action ?? null}</td>
+              )}
               <td className="px-3">
                 <Link href={r.href} className="text-white/40 hover:text-white">
                   <ChevronRight size={16} />
@@ -269,6 +286,67 @@ function Table({ headers, rows }: { headers: string[]; rows: Row[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** Per-row "send the thank-you / manage-your-card follow-up email" button.
+ *  Manages its own send/sent/error state so the table doesn't need to. */
+function FollowupButton({ id }: { id: string }) {
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">(
+    "idle",
+  );
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  const send = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (state === "sending" || state === "sent") return;
+    setState("sending");
+    setErrMsg(null);
+    try {
+      const res = await fetch(`/api/admin/cards/${id}/email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "followup" }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setErrMsg(body.error ?? `Failed (${res.status})`);
+        setState("error");
+        return;
+      }
+      setState("sent");
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : "Network error");
+      setState("error");
+    }
+  };
+
+  return (
+    <button
+      onClick={send}
+      disabled={state === "sending" || state === "sent"}
+      title={
+        state === "sent"
+          ? "Follow-up email sent"
+          : state === "error"
+            ? errMsg ?? "Send failed"
+            : "Send the thank-you / manage-your-card follow-up email"
+      }
+      className={clsx(
+        "inline-flex items-center justify-center w-8 h-8 rounded-lg border transition",
+        state === "sent"
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 cursor-default"
+          : state === "error"
+            ? "border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/15"
+            : "border-white/10 bg-white/5 text-white/55 hover:text-white hover:bg-white/10",
+      )}
+    >
+      {state === "idle" && <Mail size={14} />}
+      {state === "sending" && <Loader2 size={14} className="animate-spin" />}
+      {state === "sent" && <Check size={14} />}
+      {state === "error" && <X size={14} />}
+    </button>
   );
 }
 
