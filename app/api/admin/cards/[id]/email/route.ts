@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/admin-auth";
 import { getSession, isDbConfigured } from "@/lib/db";
+import { sendCardEmail } from "@/lib/send-card-email";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -11,17 +12,17 @@ type Body = {
   /** "card" (default) re-sends the as-shared card email; "followup"
    *  sends the thank-you + share-tips + manage-your-card announcement. */
   type?: "card" | "followup";
-  /** Optional base64 data URL (image/png or image/jpeg). When provided
-   *  it's forwarded to the public email route — uploaded to S3 and
-   *  referenced by URL in the body. */
+  /** Optional base64 data URL (image/png or image/jpeg) — a fresh
+   *  rendered-card snapshot captured on the admin detail page. */
   cardImageDataUrl?: string | null;
 };
 
 /**
- * Admin-triggered resend. Delegates to the existing public email endpoint
- * so the SES rendering and headers stay in one place. The admin can
- * optionally override the destination address; default is the address on
- * the card itself.
+ * Admin-triggered card email (resend / follow-up). Calls the shared
+ * `sendCardEmail` helper directly — no internal HTTP fetch to the public
+ * route (that loopback fails on Amplify with ERR_SSL_PACKET_LENGTH_TOO_LONG).
+ * The operator can override the destination; default is the email on the
+ * card itself.
  */
 export async function POST(req: Request, { params }: Props) {
   if (!(await isAuthenticated())) {
@@ -39,7 +40,7 @@ export async function POST(req: Request, { params }: Props) {
   try {
     body = (await req.json()) as Body;
   } catch {
-    // empty body is allowed — we'll fall back to the email on the card.
+    // empty body is allowed — fall back to the email on the card.
   }
 
   let target = body.email?.trim();
@@ -57,16 +58,14 @@ export async function POST(req: Request, { params }: Props) {
     );
   }
 
-  const origin = new URL(req.url).origin;
-  const res = await fetch(`${origin}/api/sessions/${id}/email`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email: target,
-      type: body.type === "followup" ? "followup" : "card",
-      cardImageDataUrl: body.cardImageDataUrl ?? null,
-    }),
+  const result = await sendCardEmail({
+    id,
+    email: target,
+    type: body.type === "followup" ? "followup" : "card",
+    cardImageDataUrl:
+      typeof body.cardImageDataUrl === "string" ? body.cardImageDataUrl : null,
   });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  return NextResponse.json(data, { status: res.status });
+
+  if (result.ok) return NextResponse.json({ ok: true });
+  return NextResponse.json({ error: result.error }, { status: result.status });
 }
