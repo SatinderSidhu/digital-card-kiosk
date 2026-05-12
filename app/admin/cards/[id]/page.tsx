@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2, ExternalLink } from "lucide-react";
+import { Loader2, ExternalLink, Check, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import type { CardDetails, TemplateId } from "@/lib/types";
 import { TEMPLATE_ORIENTATION } from "@/lib/types";
@@ -15,20 +15,26 @@ type CardRecord = {
   details: CardDetails;
   template: TemplateId;
   photoDataUrl: string | null;
+  cardImageUrl?: string | null;
   createdAt: number;
   expiresAt: number;
 };
+
+type SnapState = "capturing" | "ready" | "failed";
 
 export default function CardDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [data, setData] = useState<CardRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [snap, setSnap] = useState<SnapState>("capturing");
 
-  // Captured by html2canvas when the admin clicks Send. The photo on the
-  // record is inlined as a data URL by the API so the capture works
-  // without S3 CORS configuration.
+  // Wraps the rendered card so html2canvas can snapshot it. The photo on
+  // the record is inlined as a data URL by the API so the capture works
+  // without S3 CORS config.
   const cardCaptureRef = useRef<HTMLDivElement>(null);
+  // One-shot guard for the proactive snapshot-on-load.
+  const snappedRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
@@ -46,12 +52,8 @@ export default function CardDetailPage() {
     })();
   }, [id]);
 
-  // Lazy-loaded html2canvas snapshot. JPEG @ 0.85 (was PNG) — admin
-  // resends were 500-ing on the SSR Lambda because the PNG payload
-  // (2-4 MB binary, 3-5 MB base64) plus the proxy hop pushed past
-  // the 6 MB sync request limit and OOM'd the function. The recipient
-  // still tap-and-saves to phone identically; JPEG vs PNG is
-  // imperceptible at email-display sizes.
+  // Lazy-loaded html2canvas snapshot. JPEG @ 0.85 keeps the payload small
+  // (the recipient still tap-and-saves to phone identically).
   const captureCard = async (): Promise<string | null> => {
     if (!cardCaptureRef.current) return null;
     try {
@@ -68,6 +70,34 @@ export default function CardDetailPage() {
       return null;
     }
   };
+
+  // Proactively capture the card and upload it to S3 once the page has
+  // rendered, so the S3-hosted image exists before the operator sends an
+  // email — and so the public /c/[id] OG image is populated for cards
+  // created before the cardImageUrl column existed. Runs once.
+  useEffect(() => {
+    if (!data || snappedRef.current || !cardCaptureRef.current) return;
+    snappedRef.current = true;
+    const t = setTimeout(async () => {
+      const dataUrl = await captureCard();
+      if (!dataUrl) {
+        setSnap("failed");
+        return;
+      }
+      try {
+        const res = await fetch(`/api/admin/cards/${id}/snapshot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cardImageDataUrl: dataUrl }),
+        });
+        setSnap(res.ok ? "ready" : "failed");
+      } catch {
+        setSnap("failed");
+      }
+    }, 700); // let layout / fonts / the inlined photo settle first
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   if (error) {
     return (
@@ -108,7 +138,7 @@ export default function CardDetailPage() {
       </div>
 
       {/* Hero: the actual rendered card the customer designed. */}
-      <div className="flex justify-center">
+      <div className="flex flex-col items-center gap-2">
         <div
           ref={cardCaptureRef}
           className="w-full"
@@ -121,6 +151,23 @@ export default function CardDetailPage() {
             qrValue={qrValue}
           />
         </div>
+        <p className="text-[11px] text-white/45 inline-flex items-center gap-1.5">
+          {snap === "capturing" && (
+            <>
+              <Loader2 size={11} className="animate-spin" /> Preparing card image for emails…
+            </>
+          )}
+          {snap === "ready" && (
+            <>
+              <Check size={11} className="text-emerald-400" /> Card image saved — emails will embed it
+            </>
+          )}
+          {snap === "failed" && (
+            <>
+              <AlertCircle size={11} className="text-amber-400" /> Couldn&apos;t capture the card image — emails will link to the web card instead
+            </>
+          )}
+        </p>
       </div>
 
       <div className="grid md:grid-cols-[1fr_320px] gap-6">

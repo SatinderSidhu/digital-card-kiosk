@@ -51,34 +51,25 @@ const SHELL_CLOSE = `      </table>
 </body>
 </html>`;
 
-function previewBlock(cardImageUrl: string | null, d: CardDetails): string {
-  if (cardImageUrl) {
-    return `          <tr>
+/** The card-preview block: an <img> sourced from the S3-hosted snapshot.
+ *  If there's no snapshot, render nothing — the email keeps the "View on
+ *  web" button which opens the live card, and we never reconstruct the
+ *  card in HTML (it never matched the real design and rendered blank when
+ *  details were sparse). The admin detail page proactively captures +
+ *  uploads a snapshot on load, so most cards have one; the kiosk
+ *  auto-send uploads one too. */
+function previewBlock(cardImageUrl: string | null, fullName: string): string {
+  if (!cardImageUrl) return "";
+  return `          <tr>
             <td align="center" style="padding:20px 32px 6px;">
               <a href="${escapeHtml(cardImageUrl)}" style="display:block;text-decoration:none;">
-                <img src="${escapeHtml(cardImageUrl)}" alt="${escapeHtml(d.fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
+                <img src="${escapeHtml(cardImageUrl)}" alt="${escapeHtml(fullName || "Your digital card")}" style="display:block;max-width:100%;width:100%;height:auto;border-radius:14px;" />
               </a>
             </td>
           </tr>
           <tr>
             <td align="center" style="padding:6px 32px 0;">
               <a href="${escapeHtml(cardImageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">Save image to your phone →</a>
-            </td>
-          </tr>`;
-  }
-  return `          <tr>
-            <td style="padding:16px 32px 8px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:linear-gradient(135deg,#1e1b4b,#312e81 50%,#0c4a6e);border-radius:14px;color:#ffffff;">
-                <tr><td style="padding:24px 28px;color:#ffffff;">
-                  <p style="margin:0 0 4px;font-size:24px;font-weight:700;line-height:1.1;color:#ffffff;">${escapeHtml(d.fullName || "Your Name")}</p>
-                  <p style="margin:0 0 4px;font-size:15px;color:rgba(255,255,255,0.92);">${escapeHtml(d.title || "")}</p>
-                  <p style="margin:0 0 14px;font-size:13px;color:rgba(255,255,255,0.7);">${escapeHtml(d.company || "")}</p>
-                  <hr style="border:0;border-top:1px solid rgba(255,255,255,0.25);margin:0 0 14px;">
-                  ${d.phone ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">📞 ${escapeHtml(d.phone)}</p>` : ""}
-                  ${d.email ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">✉ ${escapeHtml(d.email)}</p>` : ""}
-                  ${d.website ? `<p style="margin:6px 0;font-size:14px;color:#ffffff;">🌐 ${escapeHtml(d.website)}</p>` : ""}
-                </td></tr>
-              </table>
             </td>
           </tr>`;
 }
@@ -117,7 +108,7 @@ function buildEmailBody(a: {
               </p>
             </td>
           </tr>
-${previewBlock(cardImageUrl, details)}
+${previewBlock(cardImageUrl, details.fullName)}
           <tr>
             <td style="padding:22px 32px 6px;">
               <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#94a3b8;">Share it with the world</p>
@@ -178,7 +169,7 @@ ${SHELL_CLOSE}`;
               </p>
             </td>
           </tr>
-${previewBlock(cardImageUrl, details)}
+${previewBlock(cardImageUrl, details.fullName)}
 ${viewBtn}
 ${manageBtn}
           <tr>
