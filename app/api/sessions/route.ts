@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { isDbConfigured, saveSession } from "@/lib/db";
 import { isS3Configured, uploadPhoto } from "@/lib/s3";
 import type { CardDetails, TemplateId } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
+
+/** Capability token for the manage page. 24 bytes ≈ 32 base64url chars —
+ *  enough entropy that it can't be guessed. */
+function newEditToken(): string {
+  return randomBytes(24).toString("base64url");
+}
 
 type CreateSessionBody = {
   sessionId?: string;
@@ -85,6 +92,7 @@ export async function POST(req: Request) {
       // Field name kept as `photoDataUrl` for diff continuity; contents are
       // an https URL pointing at S3 (or null if the user skipped the photo).
       photoDataUrl: photoUrl,
+      editToken: newEditToken(),
     });
 
     // Call onboard API before responding so it completes in the serverless context.

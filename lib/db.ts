@@ -22,6 +22,12 @@ export type SessionRecord = {
    *  preview the actual card. Optional because older rows from before
    *  this column existed don't have it. */
   cardImageUrl?: string | null;
+  /** Capability token for the manage page at `/c/[id]/edit?t=<editToken>`.
+   *  Whoever holds this can edit the card's details / template / photo —
+   *  same security posture as the public card link (whoever holds the
+   *  random `id` can view it). Generated at session-create time;
+   *  lazily backfilled by the email route for older rows. */
+  editToken?: string;
   /** Unix seconds. */
   createdAt: number;
   /** Unix seconds. DynamoDB's TTL feature deletes the row when this passes. */
@@ -120,6 +126,50 @@ export async function setSessionCardImage(
       Key: { id },
       UpdateExpression: "SET cardImageUrl = :url",
       ExpressionAttributeValues: { ":url": cardImageUrl },
+    }),
+  );
+}
+
+/** Patch the `editToken` on an existing session row — used to lazily
+ *  backfill rows created before the manage feature shipped. */
+export async function setSessionEditToken(
+  id: string,
+  editToken: string,
+): Promise<void> {
+  await getClient().send(
+    new UpdateCommand({
+      TableName: tableName(),
+      Key: { id },
+      UpdateExpression: "SET editToken = :t",
+      ExpressionAttributeValues: { ":t": editToken },
+    }),
+  );
+}
+
+/** Apply a cardholder edit from the manage page. Only the mutable fields
+ *  (details, template, photoDataUrl, cardImageUrl) are touched — `id`,
+ *  `editToken`, `createdAt`, `expiresAt` are left intact. */
+export async function updateSession(
+  id: string,
+  patch: {
+    details: CardDetails;
+    template: TemplateId;
+    photoDataUrl: string | null;
+    cardImageUrl: string | null;
+  },
+): Promise<void> {
+  await getClient().send(
+    new UpdateCommand({
+      TableName: tableName(),
+      Key: { id },
+      UpdateExpression:
+        "SET details = :d, template = :t, photoDataUrl = :p, cardImageUrl = :c",
+      ExpressionAttributeValues: {
+        ":d": patch.details,
+        ":t": patch.template,
+        ":p": patch.photoDataUrl,
+        ":c": patch.cardImageUrl,
+      },
     }),
   );
 }

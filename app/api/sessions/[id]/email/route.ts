@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { SESClient, SendRawEmailCommand } from "@aws-sdk/client-ses";
-import { getSession, isDbConfigured, setSessionCardImage } from "@/lib/db";
+import {
+  getSession,
+  isDbConfigured,
+  setSessionCardImage,
+  setSessionEditToken,
+} from "@/lib/db";
 import { isS3Configured, uploadCardImage } from "@/lib/s3";
 import { buildVcard } from "@/lib/vcard";
 
@@ -82,6 +88,23 @@ export async function POST(req: Request, { params }: Props) {
   const origin =
     process.env.NEXT_PUBLIC_SITE_URL ?? new URL(req.url).origin;
   const cardUrl = `${origin.replace(/\/$/, "")}/c/${id}`;
+
+  // Ensure the row has an edit token so we can hand out a manage link.
+  // New sessions get one at create time; older rows are backfilled here.
+  let editToken = session.editToken ?? null;
+  if (!editToken) {
+    editToken = randomBytes(24).toString("base64url");
+    try {
+      await setSessionEditToken(id, editToken);
+    } catch (err) {
+      console.warn("[email] editToken backfill failed:", err);
+      editToken = null; // can't link without persisting it
+    }
+  }
+  const manageUrl = editToken
+    ? `${cardUrl}/edit?t=${encodeURIComponent(editToken)}`
+    : null;
+
   const senderName = session.details.fullName || "your digital card";
   const subject = `Your digital card${senderName !== "your digital card" ? `, ${senderName}` : ""}`;
   const vcard = buildVcard(session.details, id);
@@ -161,14 +184,25 @@ ${
           </tr>`
 }
           <tr>
-            <td align="center" style="padding:20px 32px 8px;">
+            <td align="center" style="padding:20px 32px 4px;">
               <a href="${escapeHtml(cardUrl)}" style="display:inline-block;background:#7c5cff;background-image:linear-gradient(135deg,#7c5cff 0%,#22d3ee 100%);color:#ffffff;padding:14px 36px;border-radius:9999px;text-decoration:none;font-weight:600;font-size:15px;">View on web</a>
             </td>
           </tr>
+${
+  manageUrl
+    ? `          <tr>
+            <td align="center" style="padding:8px 32px 0;">
+              <a href="${escapeHtml(manageUrl)}" style="display:inline-block;color:#7c5cff;font-size:13px;font-weight:500;text-decoration:none;">
+                Manage your card — edit details, photo, or template →
+              </a>
+            </td>
+          </tr>`
+    : ""
+}
           <tr>
             <td style="padding:16px 32px 28px;text-align:center;">
               <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
-                The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app.${cardImageUrl ? " Tap the card image above to save it to your phone." : ""}
+                The <strong>.vcf</strong> file attached opens directly in your phone's Contacts app.${cardImageUrl ? " Tap the card image above to save it to your phone." : ""}${manageUrl ? " The manage link is private — anyone with it can edit your card." : ""}
               </p>
             </td>
           </tr>
@@ -186,7 +220,8 @@ ${
     "or save the .vcf attachment to add yourself to anyone's Contacts.",
     "",
     `View on web: ${cardUrl}`,
-    cardImageUrl ? `\nSave the card image: ${cardImageUrl}` : "",
+    cardImageUrl ? `Save the card image: ${cardImageUrl}` : "",
+    manageUrl ? `Manage your card (private link): ${manageUrl}` : "",
     "",
     "Attached: .vcf (contact).",
   ]
