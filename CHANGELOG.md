@@ -4,6 +4,69 @@ All notable changes to this project. Format loosely based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-05-12
+
+### Added
+- **Cardholder management app — `/c/[id]/edit`.** The card email now
+  includes a private "Manage your card" link. Opening it gives the
+  cardholder a self-serve editor: live `TemplateCard` preview, a
+  6-field details form, the template picker, and a `PhotoCapture`
+  widget with the same camera + AI studio polish (Gemini) + in-browser
+  background removal + undo as the kiosk's step-1 photo column. Saving
+  re-renders the card snapshot, persists the edit to DynamoDB, and
+  re-uploads the S3 snapshot so the emailed image + OG unfurl track
+  the change. The public `/c/[id]` reflects edits immediately.
+- **Edit-token capability model.** Each session gets a random
+  `editToken` (24 bytes, base64url) at create time — the token gates
+  `/c/[id]/edit?t=…` and `POST /api/sessions/[id]`. Same posture as
+  the public card link (whoever holds the random `id` can view it).
+  Compared constant-time server-side. Older rows are lazily backfilled
+  by the email route.
+- **`POST /api/sessions/[id]`** — token-validated update endpoint.
+  Body `{ editToken, details, template, photoDataUrl?, cardImageDataUrl? }`;
+  `photoDataUrl` omitted ⇒ keep, `null` ⇒ remove, data URL ⇒ upload &
+  replace.
+- **`components/photo-capture.tsx`** — standalone, store-agnostic
+  webcam-capture widget extracted from the kiosk's photo-section
+  logic. Plain `value`/`onChange` interface so it drops in anywhere.
+- **Admin → per-row "follow-up email" button.** Next to every card in
+  the admin list, a button that sends a thank-you / share-tips /
+  manage-your-card announcement email — "Thank you so much for
+  creating your digital card", a preview image (the S3-hosted
+  snapshot, not heavy inline content), tips for sharing the public
+  link, and the private manage link with the note that the cardholder
+  can now edit their profile and swap templates.
+
+### Changed
+- **`/api/sessions/[id]/email`** now takes a `type: "card" | "followup"`
+  body param (default `"card"`); the admin proxy
+  (`/api/admin/cards/[id]/email`) forwards it. The HTML/text body
+  builders were factored into a shared helper.
+- **Card snapshot hosted on S3 instead of email-attached.** The
+  rendered-card JPEG is uploaded to `S3_PHOTO_BUCKET/cards/<id>.jpg`
+  and referenced by URL in the email body (with a "Save image to your
+  phone" link) — the email itself stays ~10 KB regardless of card
+  complexity. The URL is persisted on the session row.
+- **`/c/[id]` OpenGraph image.** `generateMetadata` now emits
+  `og:image` + Twitter `summary_large_image` from
+  `session.cardImageUrl`, so pasting the share link into
+  iMessage/Slack/Twitter unfurls with the actual rendered card.
+- **`SessionRecord`** gains `editToken?` and `cardImageUrl?` columns.
+  New DB helpers: `setSessionEditToken`, `setSessionCardImage`,
+  `updateSession`.
+
+### Fixed
+- **Admin card-resend 500s.** The admin detail-page resend was OOMing
+  the SSR Lambda on JSON parse — PNG snapshot (2-4 MB binary) plus the
+  admin → public proxy hop exceeded the 6 MB sync request cap. Switched
+  the admin capture to JPEG @ 0.85 (matching the kiosk path).
+
+### Ops
+- IAM: the SSR role now needs `dynamodb:UpdateItem` (used by
+  `updateSession` / `setSessionEditToken` / `setSessionCardImage`) and
+  `s3:PutObject` on the `cards/*` prefix. The `S3_PHOTO_BUCKET` policy
+  needs public-read extended to `cards/*`.
+
 ## [1.5.0] — 2026-05-08
 
 ### Added

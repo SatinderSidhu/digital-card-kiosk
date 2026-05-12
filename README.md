@@ -10,13 +10,15 @@ business card in under a minute, **plus** record a short video review and an
 admin dashboard for staff. Built with **Next.js 16 (App Router) · React 19 ·
 TypeScript · Tailwind v4**, deployed on **AWS Amplify Hosting**.
 
-The kiosk has three surfaces:
+The kiosk has these surfaces:
 
 | Route | Audience | What it is |
 |---|---|---|
 | `/` | Walk-up customer | Build a digital business card (photo → details → card + share) |
+| `/c/[id]` | Anyone with the link | Public, read-only card landing (the shareable URL) |
+| `/c/[id]/edit?t=…` | The cardholder | Self-serve management app — edit details, swap template, re-take/AI-polish photo (token-gated; link arrives by email) |
 | `/reviews` | Walk-up customer | Record a 6-question video review with broadcast-style overlay |
-| `/admin` | Venue staff | Password-gated dashboard: count + list + detail of cards and reviews; resend emails |
+| `/admin` | Venue staff | Password-gated dashboard: count + list + detail of cards and reviews; resend / follow-up emails |
 
 ![Hero](docs/screenshots/00-hero.png)
 
@@ -43,14 +45,40 @@ When the customer reaches the share screen, an email is **automatically**
 sent to the address they entered in step 2. The email contains:
 
 - A personalized "Hi {firstName}," greeting and a friendly intro.
-- The **rendered card image** inline (PNG/JPEG snapshot captured client-side
-  via `html2canvas`) — so the email looks like the card they just designed.
-- A **downloadable PNG/JPEG** attachment of the same card (for "save to phone").
+- The **rendered card image** — a JPEG snapshot is captured client-side
+  via `html2canvas`, uploaded to `S3_PHOTO_BUCKET/cards/<id>.jpg`, and
+  referenced by URL in the email body (with a "Save image to your phone"
+  link). Hosting it on S3 keeps the email ~10 KB instead of bloating it
+  with a megabyte-class attachment.
 - A `.vcf` (vCard) attachment that opens directly in the phone's Contacts app.
 - A **View on web** button linking to the public card at `/c/[id]`.
+- A private **"Manage your card"** link to `/c/[id]/edit?t=…` — the
+  cardholder can come back any time to edit details, swap the template,
+  or re-take/AI-polish their photo.
 
 The form below stays usable for sending to a different address (e.g. a
 colleague).
+
+The same S3-hosted card image is used as the OpenGraph / Twitter card
+image for `/c/[id]`, so pasting the share link into iMessage, Slack, or
+Twitter unfurls with the actual rendered card.
+
+### Managing a card (`/c/[id]/edit`)
+
+The "Manage your card" link in the email carries a private `editToken`
+(24 random bytes — same capability-URL security model as the public
+`/c/[id]` link). It opens a single-page editor:
+
+- **Live preview** of the chosen template, updating as you type.
+- **Photo** — the same `PhotoCapture` widget used at the kiosk: webcam
+  capture, **AI studio polish** (Gemini, via `/api/enhance`), in-browser
+  **background removal**, undo, and a remove-photo option.
+- **Details** — a plain 6-field form (name, title, company, phone, email,
+  website).
+- **Template** — the same picker popover as the kiosk's step 1.
+- **Save** — re-renders the card snapshot, persists the edit to DynamoDB,
+  re-uploads the S3 snapshot. The public `/c/[id]` reflects the change
+  immediately.
 
 ### The six templates
 
@@ -103,11 +131,15 @@ durations.
 Password-gated (HMAC cookie session, driven by `ADMIN_PASSWORD`).
 Two tabs:
 
-- **Cards** — count tile + table of all card sessions. Click a row to open
-  the detail page with the **rendered card preview** (the actual designed
-  template), the data grid, a link to the public card, and a **Resend
-  email** form. Submitting captures the rendered card as PNG and ships it
-  to the customer's email (or any address you type).
+- **Cards** — count tile + table of all card sessions. Each row has a
+  **follow-up email** button (the small mail icon) that sends a
+  thank-you / share-tips / "now you can manage your card" announcement
+  email — preview image (the S3-hosted snapshot, not heavy inline
+  content), tips for sharing the public link, and the private manage
+  link. Click a row to open the detail page: the **rendered card
+  preview** (the actual designed template), the data grid, a link to the
+  public card, and a **Resend email** form (captures a fresh JPEG
+  snapshot and ships it to the customer's email or any address you type).
 - **Reviews** — count tile + table of all submitted reviews. Detail page
   shows an embedded video player, full record, and a resend-email form.
 
@@ -218,6 +250,7 @@ Attach an inline policy granting:
       "Action": [
         "dynamodb:GetItem",
         "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
         "dynamodb:Scan"
       ],
       "Resource": [
@@ -230,6 +263,7 @@ Attach an inline policy granting:
       "Action": ["s3:PutObject", "s3:GetObject"],
       "Resource": [
         "arn:aws:s3:::digital-card-kiosk-photos/photos/*",
+        "arn:aws:s3:::digital-card-kiosk-photos/cards/*",
         "arn:aws:s3:::digital-card-kiosk-reviews/reviews/*"
       ]
     },
@@ -242,9 +276,15 @@ Attach an inline policy granting:
 }
 ```
 
-`dynamodb:Scan` is required by the admin dashboard to list cards/reviews.
-`s3:GetObject` on photos is required by the admin card detail page to
-inline the photo as a data URL for the html2canvas capture.
+- `dynamodb:Scan` — admin dashboard listing of cards/reviews.
+- `dynamodb:UpdateItem` — patching `cardImageUrl` / `editToken` on the
+  session row, and saving cardholder edits from the manage page.
+- `s3:PutObject` on `cards/*` — uploading the rendered-card JPEG that's
+  embedded in the email and used as the OpenGraph image. Remember to
+  extend the `S3_PHOTO_BUCKET` bucket policy's public-read rule to cover
+  `cards/*` as well as `photos/*`.
+- `s3:GetObject` on `photos/*` — admin card detail page + manage page
+  inline the photo as a data URL for html2canvas capture.
 
 #### SES
 
@@ -255,9 +295,9 @@ inline the photo as a data URL for the html2canvas capture.
    200 emails/day, 1/sec, recipients-must-be-verified — fine for
    testing, blocks real customers.
 
-The kiosk auto-emails the card on share, attaching both a PNG snapshot
-and a `.vcf`. Email payload is well under the 10 MB SES limit (typical
-~600 KB).
+The kiosk auto-emails the card on share with an S3-hosted JPEG snapshot
+referenced by URL plus a `.vcf` attachment — the email itself stays
+~10 KB regardless of card complexity.
 
 ---
 
@@ -268,28 +308,33 @@ app/
   layout.tsx                root viewport / metadata
   page.tsx                  card builder (Photo / Details / Style / Share)
   globals.css               theme tokens, keyframes, glass/shimmer
-  c/[id]/page.tsx           public card landing
+  c/[id]/page.tsx           public card landing (OG image = S3 card snapshot)
+  c/[id]/edit/page.tsx      token-gated cardholder management app
   reviews/page.tsx          video review flow
   admin/
     layout.tsx              auth gate (LoginForm or AdminShell)
-    page.tsx                Cards / Reviews tabs + count tiles + tables
-    cards/[id]/page.tsx     card detail with rendered preview + send-with-PNG
+    page.tsx                Cards / Reviews tabs + count tiles + tables + follow-up button
+    cards/[id]/page.tsx     card detail with rendered preview + send-with-JPEG
     reviews/[id]/page.tsx   review detail with embedded player + send
   api/
-    sessions/               cards CRUD (DynamoDB + S3 + SES)
-    reviews/                review presigned upload + email
-    admin/                  admin endpoints (login/logout + cards/reviews list/detail/email)
-    enhance/                AI studio polish (Gemini)
-    extract-card/           AI card-data extraction (Gemini)
+    sessions/route.ts            POST: create card session (+ editToken)
+    sessions/[id]/route.ts       POST: token-gated cardholder edit
+    sessions/[id]/email/route.ts POST: card / follow-up email via SES
+    sessions/[id]/sms/route.ts   POST: SNS (no UI)
+    reviews/                     review presigned upload + email
+    admin/                       login/logout + cards/reviews list/detail/email
+    enhance/                     AI studio polish (Gemini)
+    extract-card/                AI card-data extraction (Gemini)
 
 components/
   ui.tsx                          shared buttons, inputs, segmented control
   marketing-slot.tsx              bottom 50% promo video
-  template-picker.tsx             step-1 popover for choosing default template
+  template-picker.tsx             popover for choosing template (kiosk step 1 + manage page)
   orientation-pills.tsx           step-1 landscape/portrait toggle
   size-pills.tsx                  step-1 S/M/L preview size
   camera-picker.tsx               header gear, persisted device id
   ai-polish-menu.tsx              AI studio polish style picker
+  photo-capture.tsx               standalone webcam + AI polish + bg-removal + undo widget
   sections/                       photo / personalize / build / share + frame
   scanners/                       unified scanner (OCR + QR)
   forms/details-form.tsx          legacy form (kept for the scan-result merge)
@@ -297,6 +342,7 @@ components/
   reviews/                        intro-form / recorder / playback / done /
                                    question-overlay / lower-third
   admin/                          login-form / admin-shell / resend-email
+  manage/edit-client.tsx          the /c/[id]/edit editor (preview + form + photo + picker)
 
 lib/
   store.ts                        zustand wizard store
@@ -307,9 +353,9 @@ lib/
   vcard.ts                        buildVcard(details, sessionId)
   parse-card.ts                   OCR + vCard / MECARD parsers
   mock-backend.ts                 client-side API helpers (historical naming)
-  s3.ts                           uploadPhoto + presignReviewUpload
-  db.ts                           saveSession / getSession / listSessions
-                                   + saveReview / getReview / listReviews
+  s3.ts                           uploadPhoto / uploadCardImage / presignReviewUpload
+  db.ts                           saveSession / getSession / updateSession / setSessionCardImage
+                                   / setSessionEditToken / listSessions + reviews equivalents
   admin-auth.ts                   HMAC cookie session helpers
 
 public/

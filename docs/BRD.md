@@ -145,12 +145,14 @@ IDs use the prefix **BR-** (business requirement).
   captured in step 2 the moment the share link is ready, without
   requiring an additional button press.
 - **BR-41a** The email SHALL contain: a personalised greeting, the
-  rendered card image inline (so the email itself looks like the card),
-  a downloadable PNG/JPEG attachment of the card, a `.vcf` (vCard)
-  attachment, and a "View on web" button linking to the public card
-  page.
+  rendered card image (hosted on object storage and referenced by URL,
+  so the email body stays light), a "save the card image" link, a
+  `.vcf` (vCard) attachment, a "View on web" button linking to the
+  public card page, and a private "Manage your card" link (see §4.6).
 - **BR-41b** A secondary form SHALL be available so the customer can
   send the card to a different address (e.g. a colleague).
+- **BR-41c** The hosted card image SHALL also serve as the OpenGraph /
+  social-share preview image for the public card page.
 - **BR-42** Successful sharing SHALL provide a clear, celebratory
   confirmation.
 - **BR-43** After successful sharing, the app SHALL auto-reset within a
@@ -161,7 +163,22 @@ IDs use the prefix **BR-** (business requirement).
   (wiping photo, details, and card from the kiosk) with a single
   action, intended for customers who want to walk away mid-flow.
 
-### 4.6 Video reviews (`/reviews`)
+### 4.6 Card management (`/c/[id]/edit`)
+- **BR-46** The card email SHALL include a private link that opens a
+  self-serve management page for that card.
+- **BR-47** Access to the management page SHALL be gated by a
+  per-card capability token carried in the link (no login).
+- **BR-48** On the management page the cardholder SHALL be able to edit
+  all contact fields (name, title, company, phone, email, website),
+  switch to any of the available templates, and replace / re-take /
+  remove their photo — with the same camera capture, AI studio polish,
+  and background-removal tools available at the kiosk.
+- **BR-49** Saving SHALL update the public card immediately and refresh
+  the hosted card image used in emails and social-share previews.
+- **BR-49a** The public `/c/[id]` page SHALL remain read-only — edits
+  happen only via the token-gated management page.
+
+### 4.7 Video reviews (`/reviews`)
 - **BR-70** The app SHALL provide a separate route where the customer
   records a video review answering a configurable list of questions.
 - **BR-71** The customer SHALL provide their name, title, and email
@@ -179,7 +196,7 @@ IDs use the prefix **BR-** (business requirement).
   and the customer SHALL receive a confirmation email with a playback
   link.
 
-### 4.7 Admin dashboard (`/admin`)
+### 4.8 Admin dashboard (`/admin`)
 - **BR-80** The admin route SHALL require authentication via a shared
   password.
 - **BR-81** The dashboard SHALL show a count tile and list view for
@@ -188,13 +205,16 @@ IDs use the prefix **BR-** (business requirement).
 - **BR-83** The card detail page SHALL render the actual card the
   customer designed (template + photo + QR), alongside a data grid.
 - **BR-84** The card detail page SHALL provide a "Resend email" form
-  that emails the rendered card (as an inline image and a downloadable
-  attachment) to the address on file or to an alternate address typed
-  by the operator.
+  that emails the rendered card to the address on file or to an
+  alternate address typed by the operator.
+- **BR-84a** Each card row in the list SHALL have a one-click action
+  that sends a follow-up email — a thank-you, the card-image preview,
+  tips for sharing the public link, and the private management link
+  announcing that the cardholder can now edit their profile.
 - **BR-85** The review detail page SHALL embed the recorded video and
   provide the same resend-email control.
 
-### 4.6 Kiosk behaviour
+### 4.9 Kiosk behaviour
 - **BR-50** The UI SHALL be optimised for touch on a tall portrait display
   (~480 px effective width).
 - **BR-51** The UI SHALL prevent unintended zoom, text selection, and swipe
@@ -202,7 +222,7 @@ IDs use the prefix **BR-** (business requirement).
 - **BR-52** The UI SHALL be visually lively (motion, transitions, feedback on
   interaction) to feel engaging and high-end.
 
-### 4.7 Data handling and privacy
+### 4.10 Data handling and privacy
 - **BR-60** The user's details and photo SHALL exist only for the duration of
   the session on the client, unless the user explicitly shares them (by QR or
   email).
@@ -274,9 +294,15 @@ See [CHANGELOG.md](../CHANGELOG.md) for full per-release detail.
 - **v1.5** — _Shipped 2026-05-08._ Admin card detail renders the
   actual designed card preview; resend-email captures and attaches
   the PNG snapshot.
+- **v1.6** — _Shipped 2026-05-12._ Cardholder management app at
+  `/c/[id]/edit` (token-gated; edit details, swap template, re-take /
+  AI-polish photo). Card snapshot hosted on S3 (referenced by URL in
+  emails, used as OG image) instead of email-attached. Admin per-row
+  "follow-up email" button. Email route gains a `card | followup` type.
 - **v2.0 (proposed)** — Multi-tenant branding, additional templates
   toggleable per deployment, multi-language, CRM webhook,
-  analytics events, idle-reset on all sections, operator PIN.
+  analytics events, idle-reset on all sections, operator PIN,
+  multi-user admin with audit log.
 
 ## 10. Open questions
 

@@ -46,6 +46,38 @@ logical steps** because the picker auto-advances after the build animation:
 The active section in `app/page.tsx` is derived from store state — no
 explicit step counter exposed in code beyond the wizard step number.
 
+## The card management flow (`/c/[id]/edit`)
+
+The card email includes a private "Manage your card" link
+(`/c/[id]/edit?t=<editToken>`). The `editToken` is a 24-byte random
+capability stored on the session row (generated at create time, lazily
+backfilled by the email route for older rows). Same security posture as
+the public `/c/[id]` link — whoever holds the random value gets access.
+Token is compared constant-time server-side (`crypto.timingSafeEqual`).
+
+- [app/c/[id]/edit/page.tsx](app/c/%5Bid%5D/edit/page.tsx) — server
+  component. Validates `?t=` against the stored token (renders a clear
+  error page on missing / invalid / expired). Inlines the photo as a
+  data URL (fetches the S3 object) so the editor can preview it, run
+  AI/bg ops on it, and capture the card snapshot via html2canvas without
+  needing S3 CORS. Renders `<EditClient>`.
+- [components/manage/edit-client.tsx](components/manage/edit-client.tsx) —
+  live `TemplateCard` preview + 6-field form + `TemplatePicker` popover
+  + `<PhotoCapture>` widget + Save. Save captures a fresh JPEG snapshot
+  (scale 1, quality 0.85), POSTs to `/api/sessions/[id]`, shows "Saved".
+- [app/api/sessions/[id]/route.ts](app/api/sessions/%5Bid%5D/route.ts) —
+  `POST` token-gated update. Body `{ editToken, details, template,
+  photoDataUrl?, cardImageDataUrl? }`. `photoDataUrl` omitted ⇒ keep,
+  `null` ⇒ remove, data URL ⇒ upload & replace. Re-uploads the card
+  snapshot to S3 and patches `cardImageUrl` so the emailed image + OG
+  unfurl track the edit.
+- [components/photo-capture.tsx](components/photo-capture.tsx) —
+  standalone, store-agnostic webcam-capture widget (capture / retake /
+  AI studio polish via `AiPolishMenu` + `/api/enhance` / in-browser
+  background removal / undo / remove). The kiosk's `photo-section`
+  predates this and is left untouched; `PhotoCapture` is what the
+  manage page uses, and what new surfaces should reuse.
+
 ## The review flow (`/reviews`)
 
 Independent of the card flow; separate zustand store
@@ -71,16 +103,21 @@ HMAC cookie session, driven by `ADMIN_PASSWORD`
 [app/admin/layout.tsx](app/admin/layout.tsx) gates every admin route by
 checking the cookie; renders `<LoginForm>` or `<AdminShell>` accordingly.
 
-- `/admin` — Cards / Reviews tabs with count tiles + list tables.
+- `/admin` — Cards / Reviews tabs with count tiles + list tables. Each
+  card row has a **follow-up email** button (`<FollowupButton>`) that
+  POSTs `{ type: "followup" }` — sends the thank-you / share-tips /
+  "now you can manage your card" announcement email. Manages its own
+  idle/sending/sent/error state.
 - `/admin/cards/[id]` — **Renders the actual card preview** as the
   hero (photo + chosen template + QR), data grid, and resend-email
-  form. Submit captures the rendered card via `html2canvas` and attaches
-  the PNG to the email. The photo is inlined as a data URL by the API
-  so capture works without S3 CORS configuration.
+  form. Submit captures the rendered card via `html2canvas` (JPEG @
+  0.85 — PNG was OOMing the SSR Lambda on the proxy hop) and ships it
+  to the email. The photo is inlined as a data URL by the API so
+  capture works without S3 CORS configuration.
 - `/admin/reviews/[id]` — Embedded video player + record + resend form.
 
-Admin email endpoints proxy to the public SES routes so SES rendering
-stays single-source.
+Admin email endpoints proxy to the public SES routes (`type` forwarded)
+so SES rendering stays single-source.
 
 ## Key files
 
@@ -104,9 +141,13 @@ stays single-source.
   helpers; the `mock*` prefix is historical, these now hit real route
   handlers backed by AWS.
 - [lib/db.ts](lib/db.ts) — DynamoDB helpers: `saveSession`, `getSession`,
-  `listSessions` (+ same for reviews).
-- [lib/s3.ts](lib/s3.ts) — `uploadPhoto`, `presignReviewUpload`,
-  `isS3Configured`, `isReviewS3Configured`.
+  `updateSession` (cardholder edit), `setSessionCardImage`,
+  `setSessionEditToken`, `listSessions` (+ save/get/list for reviews).
+  `SessionRecord` has optional `cardImageUrl` and `editToken` columns.
+- [lib/s3.ts](lib/s3.ts) — `uploadPhoto` (`photos/<id>.<ext>`),
+  `uploadCardImage` (`cards/<id>.<ext>`, `Content-Disposition:
+  attachment`), `presignReviewUpload`, `isS3Configured`,
+  `isReviewS3Configured`.
 - [lib/admin-auth.ts](lib/admin-auth.ts) — HMAC cookie helpers.
 - [components/ui.tsx](components/ui.tsx) — shared `PrimaryButton`,
   `GhostButton`, `SegmentedControl`, `Field`, `TextInput`, `StepShell`.
@@ -158,25 +199,29 @@ stays single-source.
 
 ## Email & SES
 
-`/api/sessions/[id]/email` builds a `multipart/mixed → multipart/related`
-MIME message:
+`/api/sessions/[id]/email` takes a `type: "card" | "followup"` body
+param (default `"card"`):
 
-- `multipart/related`
-  - `multipart/alternative` (text + HTML — HTML references `cid:` for
-    the inline card snapshot)
-  - `image/jpeg` or `image/png` (Content-ID + Content-Disposition:
-    attachment so it renders inline AND lists in the attachments tray —
-    single copy keeps payload size down)
-- `text/vcard` (attachment)
+- **`card`** — the as-shared email: greeting, the card image, View on
+  web, Manage your card link, `.vcf` attachment.
+- **`followup`** — thank-you / share-tips / "now you can manage your
+  card" announcement. Same building blocks, restructured copy. Fired
+  by the admin list's per-row follow-up button via the
+  `/api/admin/cards/[id]/email` proxy.
 
-Pre-flight rejects rawMessage > 9.5 MB with a 413 instead of letting
-SES return a generic 400. Logs SES error name + raw byte count to
-CloudWatch on failure.
+The card image is **not attached** — `uploadCardImage` writes the JPEG
+to `S3_PHOTO_BUCKET/cards/<id>.jpg`, persists the URL on the session
+row, and the HTML body references it via `<img src="…">` plus a "Save
+image" link. So the email itself is ~10 KB regardless of card weight —
+no more Lambda OOMs / SES "message too large". MIME shape is just
+`multipart/mixed → multipart/alternative + text/vcard`. The same S3 URL
+is the OG image for `/c/[id]`.
 
-The kiosk auto-send uses JPEG @ scale 1.0 quality 0.85 (~300-700 KB
-per card) to fit comfortably in the Lambda 6 MB sync request limit.
-The admin resend uses PNG @ scale 1.0 (~1-3 MB) since the operator
-flow is one-at-a-time and quality is more valuable than speed.
+Client-side captures (kiosk share-section, admin resend, manage-page
+save) all use JPEG @ scale 1.0 quality 0.85 — the request body that
+carries the data URL to the route still has the 6 MB Lambda sync cap, so
+JPEG (not PNG) everywhere. A leftover 413 pre-flight on rawMessage size
+stays as defense-in-depth.
 
 ## Runtime requirements
 

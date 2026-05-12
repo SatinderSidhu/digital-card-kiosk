@@ -46,27 +46,28 @@ HTTP contract.
                               ▼  HTTPS
 ┌─── AWS Amplify SSR Lambda (server) ─────────────────────────────────────────┐
 │                                                                             │
-│  /api/sessions (POST)             save card row + upload photo to S3        │
-│  /api/sessions/[id]/email (POST)  SES sendRawEmail (vCard + PNG inline)     │
+│  /api/sessions (POST)             create card row + photo→S3 + editToken    │
+│  /api/sessions/[id] (POST)        token-gated cardholder edit               │
+│  /api/sessions/[id]/email (POST)  SES email (type: card | followup);        │
+│                                   card snapshot→S3, referenced by URL      │
 │  /api/sessions/[id]/sms   (POST)  SNS publish (currently no UI)             │
 │  /api/reviews             (POST)  presign S3 PUT for review video           │
 │  /api/reviews/[id]/email  (POST)  SES sendEmail + persist review row        │
-│  /api/admin/login         (POST)  HMAC-cookie auth                          │
-│  /api/admin/logout        (POST)                                            │
+│  /api/admin/login,/logout (POST)  HMAC-cookie auth                          │
 │  /api/admin/cards         (GET)   listSessions (Scan)                       │
 │  /api/admin/cards/[id]    (GET)   getSession + inline photo as data URL     │
-│  /api/admin/cards/[id]/email (POST)  proxy to /api/sessions/.../email       │
-│  /api/admin/reviews       (GET)   listReviews (Scan)                        │
-│  /api/admin/reviews/[id]  (GET)   getReview                                 │
-│  /api/admin/reviews/[id]/email (POST) proxy to /api/reviews/.../email       │
-│  /api/enhance             (POST)  Gemini AI studio polish                   │
-│  /api/extract-card        (POST)  Gemini AI card-data extraction            │
+│  /api/admin/cards/[id]/email (POST)  proxy → /api/sessions/.../email        │
+│  /api/admin/reviews(/[id]) (GET)  listReviews / getReview                   │
+│  /api/admin/reviews/[id]/email (POST) proxy → /api/reviews/.../email        │
+│  /api/enhance,/extract-card (POST) Gemini AI polish / card extraction       │
 │                                                                             │
+│  + server pages: /c/[id] (public, OG = S3 card snapshot)                    │
+│                  /c/[id]/edit?t=… (token-gated manage app)                  │
 └─────────────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-        DynamoDB (sessions + reviews) · S3 (photos + reviews) ·
-        SES (transactional email) · SNS (SMS) · Gemini API (AI)
+        DynamoDB (sessions + reviews) · S3 (photos: photos/* + cards/*,
+        reviews: reviews/*) · SES (email) · SNS (SMS) · Gemini API (AI)
 ```
 
 All camera input, OCR, and QR decoding happen **on device**. The card
@@ -167,8 +168,20 @@ Step 2 (`PersonalizeSection`) passes `setDetails` from the wizard
 store as the `onEdit` so each keystroke updates the store and live
 re-renders the card.
 
-### 4.8 Review record — [lib/db.ts](../lib/db.ts)
+### 4.8 DynamoDB records — [lib/db.ts](../lib/db.ts)
 ```ts
+type SessionRecord = {
+  id: string;
+  details: CardDetails;
+  template: TemplateId;
+  photoDataUrl: string | null;  // S3 URL once uploaded (legacy field name)
+  cardImageUrl?: string | null; // S3 URL of the rendered-card JPEG snapshot;
+                                // used in emails and as the /c/[id] OG image
+  editToken?: string;           // 24-byte capability for /c/[id]/edit?t=…
+  createdAt: number;            // unix seconds
+  expiresAt: number;            // unix seconds (DynamoDB TTL attribute)
+};
+
 type ReviewRecord = {
   id: string;            // matches the S3 object key prefix
   name: string;
@@ -180,6 +193,9 @@ type ReviewRecord = {
   expiresAt: number;     // unix seconds (DynamoDB TTL attribute)
 };
 ```
+Mutators: `saveSession` (Put), `updateSession` (cardholder edit — patches
+details/template/photoDataUrl/cardImageUrl), `setSessionCardImage`,
+`setSessionEditToken` — the last three are targeted `UpdateItem`s.
 
 ---
 
@@ -273,7 +289,8 @@ partial deploys are safe.
 
 ### 6.1 `POST /api/sessions`
 Save a card session. Uploads `photoDataUrl` to S3 if it's a base64 data
-URL, stores the URL on the row.
+URL, stores the URL on the row. Generates and stores an `editToken` (24
+random bytes, base64url) so a manage link can be handed out later.
 
 **Request**
 ```ts
@@ -286,27 +303,55 @@ URL, stores the URL on the row.
 ```
 **Response** — `{ url: string }` (public short URL `/c/<id>`).
 
-### 6.2 `POST /api/sessions/[id]/email`
-Send the card by email via SES `SendRawEmail`. Builds a
-`multipart/mixed → multipart/related` MIME message with text + HTML +
-inline card image (cid) + vCard attachment.
+### 6.2 `POST /api/sessions/[id]` (cardholder edit)
+Token-gated update from the manage page. The `editToken` is compared
+constant-time against the stored value (`crypto.timingSafeEqual`).
+`photoDataUrl` semantics: omitted ⇒ keep current; `null` ⇒ remove;
+data URL ⇒ upload to S3 and replace. `cardImageDataUrl`, when present,
+is uploaded to `cards/<id>.<ext>` and `cardImageUrl` is patched on the
+row so the emailed image + OG unfurl track the edit.
+
+**Request**
+```ts
+{
+  editToken: string;
+  details: CardDetails;
+  template: TemplateId;
+  photoDataUrl?: string | null;     // omit ⇒ keep, null ⇒ remove, data URL ⇒ replace
+  cardImageDataUrl?: string | null; // fresh rendered-card jpeg/png snapshot
+}
+```
+**Response** — `{ ok: true; photoDataUrl: string | null; cardImageUrl: string | null }`.
+`401` missing token, `403` bad token, `404` no such card.
+
+### 6.3 `POST /api/sessions/[id]/email`
+Send an email via SES `SendRawEmail`. `type` selects the template:
+`"card"` (default) = the as-shared card email; `"followup"` = the
+thank-you / share-tips / "now you can manage your card" announcement.
+The card image is **not attached** — `cardImageDataUrl` (or the row's
+existing `cardImageUrl`) is uploaded to `cards/<id>.<ext>` and
+referenced by URL in the body, so the email stays ~10 KB. MIME shape is
+`multipart/mixed → multipart/alternative + text/vcard`. Lazily
+backfills `editToken` if the row predates it, so the manage link can be
+included.
 
 **Request**
 ```ts
 {
   email: string;
-  cardImageDataUrl?: string | null;  // image/jpeg or image/png data URL
+  type?: "card" | "followup";
+  cardImageDataUrl?: string | null; // image/jpeg or image/png data URL
 }
 ```
-**Response** — `{ ok: true }` or `4xx`/`5xx` with `{ error }`.
-Pre-flight rejects raw messages over 9.5 MB with `413`.
+**Response** — `{ ok: true }` or `4xx`/`5xx` with `{ error }`. A leftover
+413 pre-flight on raw-message size remains as defense-in-depth.
 
-### 6.3 `POST /api/sessions/[id]/sms`
+### 6.5 `POST /api/sessions/[id]/sms`
 Currently in the codebase but not wired to any UI (SMS share was
 removed in v1.2). Kept available behind the proper IAM if the SMS
 share returns.
 
-### 6.4 `POST /api/reviews`
+### 6.6 `POST /api/reviews`
 Create a review session. Returns a presigned PUT URL the client uses
 to upload the recorded video directly to `S3_REVIEW_BUCKET`.
 
@@ -316,7 +361,7 @@ to upload the recorded video directly to `S3_REVIEW_BUCKET`.
 ```
 **Response** — `{ uploadUrl: string; objectUrl: string; key: string }`.
 
-### 6.5 `POST /api/reviews/[id]/email`
+### 6.7 `POST /api/reviews/[id]/email`
 Send the review confirmation email (with playback link). Persists a
 `ReviewRecord` row best-effort after SES success so admin can list it.
 
@@ -332,18 +377,28 @@ Send the review confirmation email (with playback link). Persists a
 ```
 **Response** — `{ ok: true }`.
 
-### 6.6 `GET /c/[id]` (public landing)
-Server-rendered page (`app/c/[id]/page.tsx`). Renders the chosen
-template with the customer's data and a "Save to Contacts" button that
-serves the vCard as a data URL download.
+### 6.8 `GET /c/[id]` and `GET /c/[id]/edit` (public + manage pages)
+- `/c/[id]` — server-rendered (`app/c/[id]/page.tsx`). Renders the
+  chosen template with the customer's data and a "Save to Contacts"
+  button (vCard data-URL download). `generateMetadata` emits `og:image`
+  + Twitter `summary_large_image` from `session.cardImageUrl` when
+  present, so share-link unfurls preview the actual card.
+- `/c/[id]/edit?t=<token>` — server-rendered
+  (`app/c/[id]/edit/page.tsx`). Validates `?t=` against the stored
+  `editToken` (constant-time); renders a clear error page on missing /
+  invalid / expired. Inlines the photo as a data URL before handing it
+  to the client editor so html2canvas capture + AI/bg ops work without
+  S3 CORS. The editor (`components/manage/edit-client.tsx`) is a live
+  `TemplateCard` preview + 6-field form + template picker + the
+  `PhotoCapture` widget, and POSTs to `/api/sessions/[id]` on save.
 
-### 6.7 Admin auth
+### 6.9 Admin auth
 - `POST /api/admin/login` — `{ password }` → sets HttpOnly +
   SameSite=Strict cookie containing
   `HMAC_SHA256(ADMIN_PASSWORD, "admin-session")`. 12-hour TTL.
 - `POST /api/admin/logout` — clears the cookie.
 
-### 6.8 Admin endpoints
+### 6.10 Admin endpoints
 All gated by the `admin_session` cookie.
 
 - `GET /api/admin/cards` — list all sessions (DynamoDB `Scan`).
@@ -353,20 +408,23 @@ All gated by the `admin_session` cookie.
   base64 data URL** (the server fetches the S3 object) so the admin
   client can capture the rendered card via html2canvas without S3
   CORS configuration.
-- `POST /api/admin/cards/[id]/email` — `{ email?, cardImageDataUrl? }`
-  proxies to `/api/sessions/[id]/email`. The `email` defaults to the
-  card's own; the `cardImageDataUrl`, when supplied by the admin
-  client, is forwarded as the email's PNG attachment.
+- `POST /api/admin/cards/[id]/email` — `{ email?, type?, cardImageDataUrl? }`
+  proxies to `/api/sessions/[id]/email`. `email` defaults to the
+  card's own; `type` ("card" | "followup") is forwarded — the admin
+  list's per-row follow-up button POSTs `{ type: "followup" }`;
+  `cardImageDataUrl`, when supplied (admin detail page), is forwarded
+  so a fresh JPEG snapshot is uploaded.
 - `GET /api/admin/reviews`, `GET /api/admin/reviews/[id]`,
   `POST /api/admin/reviews/[id]/email` — same shape but for the
   reviews table.
 
-### 6.9 AI helper endpoints
+### 6.11 AI helper endpoints
 - `POST /api/enhance` — `{ image, style? }` → `{ image }`.
-  Server-side call to Gemini 2.5 Flash Image.
+  Server-side call to Gemini 2.5 Flash Image. Used by the kiosk's
+  photo-section and the manage page's `PhotoCapture` widget.
 - `POST /api/extract-card` — `{ image }` → `{ details: Partial<CardDetails> }`.
 
-### 6.10 Security
+### 6.12 Security
 - Enforce HTTPS (Amplify default).
 - Validate `email` authoritatively server-side.
 - Strip EXIF from photo on upload (TODO; not yet implemented).
@@ -469,11 +527,14 @@ Lint: `npm run lint`.
 | BR-31 | TR-31, TR-32 |
 | BR-33 | TR-33 |
 | BR-40 | TR-41 |
-| BR-41 | TR-42, TR-43, §6.2 |
+| BR-41, BR-41a, BR-41b | TR-42, TR-43, §6.3 |
 | BR-42 | TR-44 |
 | BR-43 | TR-44 |
+| BR-44, BR-45 | `share-section.tsx` (change-style / clear-session) |
+| BR-70–BR-75 | §6.6, §6.7, `app/reviews/`, `components/reviews/` |
+| BR-80–BR-85 | §6.9, §6.10, `app/admin/`, `components/admin/` |
 | BR-50, BR-51 | TR-01, `app/layout.tsx` viewport, `globals.css` |
 | BR-52 | TR-50, TR-51, TR-52 |
 | BR-60, BR-61 | §8 |
 | BR-N1, BR-N2 | TR-N3, TR-N4 |
-| BR-N4 | §6.4, §2 (on-device OCR / QR) |
+| BR-N4 | §6.6, §2 (on-device OCR / QR) |
