@@ -37,13 +37,22 @@ export async function GET(_req: Request, { params }: Props) {
   }
 }
 
+/** Inline the photo when small enough; above ~1 MB fall back to the S3
+ *  URL to avoid blowing past Amplify's 6 MB Lambda response cap (the
+ *  manage page was 413-ing on cards with bg-removed PNG photos). Display
+ *  works either way; html2canvas capture on the URL fallback needs CORS
+ *  on the photos bucket. */
+const INLINE_MAX_BYTES = 1_000_000;
 async function inlinePhoto(value: string | null): Promise<string | null> {
   if (!value) return null;
   if (!value.startsWith("http")) return value; // already a data URL
   try {
     const res = await fetch(value);
     if (!res.ok) return value;
+    const len = res.headers.get("content-length");
+    if (len && Number(len) > INLINE_MAX_BYTES) return value;
     const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > INLINE_MAX_BYTES) return value;
     const contentType = res.headers.get("content-type") ?? "image/jpeg";
     return `data:${contentType};base64,${buf.toString("base64")}`;
   } catch (err) {

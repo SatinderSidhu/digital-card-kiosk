@@ -102,13 +102,25 @@ export default async function EditPage({ params, searchParams }: Props) {
   );
 }
 
+/** Inline the photo as a data URL when it's small enough — lets the
+ *  editor preview it, run AI / bg-removal on it, and capture the card
+ *  snapshot without S3 CORS. For larger photos (PNG with transparency
+ *  after bg-removal, hi-res webcam captures), inlining the base64
+ *  bytes into the SSR response would push past Amplify's 6 MB sync
+ *  Lambda response cap and the page would 413. Above the threshold we
+ *  fall back to the S3 URL — display still works; html2canvas capture
+ *  needs CORS on the photos bucket. */
+const INLINE_MAX_BYTES = 1_000_000;
 async function inlinePhoto(value: string | null): Promise<string | null> {
   if (!value) return null;
   if (!value.startsWith("http")) return value; // already a data URL
   try {
     const res = await fetch(value);
     if (!res.ok) return value;
+    const len = res.headers.get("content-length");
+    if (len && Number(len) > INLINE_MAX_BYTES) return value;
     const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > INLINE_MAX_BYTES) return value;
     const contentType = res.headers.get("content-type") ?? "image/jpeg";
     return `data:${contentType};base64,${buf.toString("base64")}`;
   } catch {
