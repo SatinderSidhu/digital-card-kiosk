@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Palette,
   Trash2,
+  ImageDown,
 } from "lucide-react";
 import { useWizard } from "@/lib/store";
 import { TEMPLATE_ORIENTATION } from "@/lib/types";
@@ -178,6 +179,37 @@ export function ShareSection({ state }: Props) {
   const handleSendEmail = () => {
     void sendEmailTo(email, cardImage);
   };
+
+  // Separate state for the "send me the image" email so it doesn't fight
+  // with the auto-send / resend status on the main button.
+  const [imageEmailState, setImageEmailState] = useState<
+    "idle" | "sending" | "sent" | "error"
+  >("idle");
+  const [imageEmailError, setImageEmailError] = useState<string | null>(null);
+
+  const handleSendImageEmail = useCallback(async () => {
+    if (!template) return;
+    const trimmed = email.trim();
+    if (!trimmed.includes("@")) {
+      setImageEmailError("Enter a valid email address first.");
+      setImageEmailState("error");
+      return;
+    }
+    setImageEmailError(null);
+    setImageEmailState("sending");
+    try {
+      await mockSendEmail(
+        trimmed,
+        { sessionId, details, template, photoDataUrl: photo },
+        cardImage,
+        "image",
+      );
+      setImageEmailState("sent");
+    } catch (e) {
+      setImageEmailState("error");
+      setImageEmailError(e instanceof Error ? e.message : "Could not send");
+    }
+  }, [template, email, sessionId, details, photo, cardImage]);
 
   // Snapshot the rendered card as a PNG once it's mounted. Done client-side
   // because the live DOM has the photo, gradients, and QR already laid out
@@ -422,6 +454,43 @@ export function ShareSection({ state }: Props) {
                   </>
                 )}
               </PrimaryButton>
+            </div>
+
+            {/* Image-only email — a separate email type that puts the
+                rendered card image front and centre (big <img> sourced
+                from S3) AND attaches it as a downloadable file in the
+                attachments tray. */}
+            <div className="mt-3 pt-3 border-t border-white/5">
+              <button
+                onClick={handleSendImageEmail}
+                disabled={
+                  !email.includes("@") ||
+                  imageEmailState === "sending" ||
+                  imageEmailState === "sent"
+                }
+                className="w-full inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-medium bg-white/5 border border-white/10 text-white/85 hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {imageEmailState === "sending" && (
+                  <>
+                    <Loader2 size={14} className="animate-spin" /> Sending the image…
+                  </>
+                )}
+                {imageEmailState === "sent" && (
+                  <>
+                    <Check size={14} className="text-emerald-300" /> Image sent
+                  </>
+                )}
+                {(imageEmailState === "idle" || imageEmailState === "error") && (
+                  <>
+                    <ImageDown size={14} /> Also email me the image (downloadable)
+                  </>
+                )}
+              </button>
+              {imageEmailError && (
+                <p className="mt-1.5 text-[11px] text-red-300 text-center">
+                  {imageEmailError}
+                </p>
+              )}
             </div>
           </div>
         </div>

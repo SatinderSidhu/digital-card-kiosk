@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { Loader2, Check, ExternalLink, Save } from "lucide-react";
+import { Loader2, Check, ExternalLink, Save, ImageDown } from "lucide-react";
 import { TemplateCard } from "@/components/templates/card-templates";
 import { TemplatePicker } from "@/components/template-picker";
 import { PhotoCapture } from "@/components/photo-capture";
@@ -46,6 +46,12 @@ export function EditClient({ id, editToken, initial }: Props) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // "Email me the card image" — independent of the Save flow.
+  const [imageEmailState, setImageEmailState] = useState<
+    "idle" | "sending" | "sent" | "error"
+  >("idle");
+  const [imageEmailError, setImageEmailError] = useState<string | null>(null);
+
   const cardCaptureRef = useRef<HTMLDivElement>(null);
 
   const setField = (key: keyof CardDetails, v: string) =>
@@ -54,6 +60,32 @@ export function EditClient({ id, editToken, initial }: Props) {
   const qrValue = buildVcard(details, id);
   const orientation = TEMPLATE_ORIENTATION[template];
   const previewMaxW = orientation === "portrait" ? 320 : 620;
+
+  const sendImageEmail = async () => {
+    const to = details.email.trim();
+    if (!to.includes("@")) {
+      setImageEmailError("Add an email address above first.");
+      setImageEmailState("error");
+      return;
+    }
+    setImageEmailError(null);
+    setImageEmailState("sending");
+    try {
+      const res = await fetch(`/api/sessions/${id}/email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: to, type: "image" }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Send failed (${res.status})`);
+      }
+      setImageEmailState("sent");
+    } catch (err) {
+      setImageEmailError(err instanceof Error ? err.message : "Could not send");
+      setImageEmailState("error");
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -208,21 +240,53 @@ export function EditClient({ id, editToken, initial }: Props) {
               <Check size={14} /> Saved — your public card is updated.
             </div>
           )}
-          <PrimaryButton
-            onClick={save}
-            disabled={saving}
-            className="self-start"
-          >
-            {saving ? (
-              <>
-                <Loader2 size={18} className="animate-spin" /> Saving…
-              </>
-            ) : (
-              <>
-                <Save size={18} /> Save changes
-              </>
-            )}
-          </PrimaryButton>
+          <div className="flex items-center gap-3 flex-wrap">
+            <PrimaryButton onClick={save} disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" /> Saving…
+                </>
+              ) : (
+                <>
+                  <Save size={18} /> Save changes
+                </>
+              )}
+            </PrimaryButton>
+
+            <button
+              onClick={sendImageEmail}
+              disabled={
+                !details.email.includes("@") ||
+                imageEmailState === "sending" ||
+                imageEmailState === "sent"
+              }
+              className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium bg-white/5 border border-white/10 text-white/85 hover:bg-white/10 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition"
+              title={
+                details.email.includes("@")
+                  ? `Email the card image to ${details.email}`
+                  : "Add your email above first"
+              }
+            >
+              {imageEmailState === "sending" && (
+                <>
+                  <Loader2 size={16} className="animate-spin" /> Sending image…
+                </>
+              )}
+              {imageEmailState === "sent" && (
+                <>
+                  <Check size={16} className="text-emerald-300" /> Image sent
+                </>
+              )}
+              {(imageEmailState === "idle" || imageEmailState === "error") && (
+                <>
+                  <ImageDown size={16} /> Email me the image
+                </>
+              )}
+            </button>
+          </div>
+          {imageEmailError && (
+            <p className="text-xs text-red-300">{imageEmailError}</p>
+          )}
         </div>
       </div>
     </main>

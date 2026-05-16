@@ -10,7 +10,7 @@ import { isS3Configured, uploadCardImage } from "./s3";
 import { buildVcard } from "./vcard";
 import type { CardDetails } from "./types";
 
-export type CardEmailType = "card" | "followup";
+export type CardEmailType = "card" | "followup" | "image";
 
 export type SendCardEmailResult =
   | { ok: true; cardImageUrl: string | null }
@@ -96,6 +96,46 @@ function buildEmailBody(a: {
               <a href="${escapeHtml(cardUrl)}" style="display:inline-block;background:#7c5cff;background-image:linear-gradient(135deg,#7c5cff 0%,#22d3ee 100%);color:#ffffff;padding:14px 36px;border-radius:9999px;text-decoration:none;font-weight:600;font-size:15px;">View on web</a>
             </td>
           </tr>`;
+
+  if (type === "image") {
+    const subject = "Your digital card — image copy";
+    const html = `${SHELL_OPEN}
+          <tr>
+            <td style="padding:32px 32px 8px;">
+              <h1 style="margin:0 0 10px;font-size:22px;font-weight:600;color:#0f172a;letter-spacing:-0.01em;">${escapeHtml(greeting)}</h1>
+              <p style="margin:0;font-size:15px;line-height:1.55;color:#475569;">
+                Here's a downloadable copy of your digital card. Tap the image to save it to your phone, drop it in your email signature, or share it anywhere — it's also attached to this email.
+              </p>
+            </td>
+          </tr>
+${previewBlock(cardImageUrl, details.fullName)}
+${viewBtn}
+${manageBtn}
+          <tr>
+            <td style="padding:16px 32px 28px;text-align:center;">
+              <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8;">
+                The card image is attached as a downloadable file${manageUrl ? ", and the manage link above is private — anyone with it can edit your card" : ""}.
+              </p>
+            </td>
+          </tr>
+${SHELL_CLOSE}`;
+    const text = [
+      greeting,
+      "",
+      "Here's a downloadable copy of your digital card.",
+      "Tap the image attachment to save it, or open the link below:",
+      "",
+      cardImageUrl ? `Image: ${cardImageUrl}` : "(image unavailable)",
+      "",
+      `View on web: ${cardUrl}`,
+      manageUrl ? `Manage your card (private link): ${manageUrl}` : "",
+      "",
+      "Attached: card.jpg (image).",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return { subject, html, text };
+  }
 
   if (type === "followup") {
     const subject = "Your digital card — share it and make it yours";
@@ -276,6 +316,39 @@ export async function sendCardEmail(
     }
   }
 
+  // For the image-only email type the customer expects the card image
+  // to land in their email client's attachment tray (not just inline) so
+  // it's one tap to save / share / print. Fetch the bytes from S3
+  // server-side and attach as an image/jpeg (or png) MIME part.
+  let imageAttachment: { mime: string; filename: string; base64: string } | null =
+    null;
+  if (type === "image") {
+    if (!cardImageUrl) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          "Card image isn't ready yet. Open the card once on the kiosk or the admin page so it gets snapshotted, then try again.",
+      };
+    }
+    try {
+      const res = await fetch(cardImageUrl);
+      if (!res.ok) throw new Error(`fetch ${cardImageUrl} → ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const mime = res.headers.get("content-type") ?? "image/jpeg";
+      const ext = mime === "image/png" ? "png" : "jpg";
+      imageAttachment = {
+        mime,
+        filename: `${safeFilename(d.fullName)}-card.${ext}`,
+        base64: buf.toString("base64").match(/.{1,76}/g)?.join("\r\n") ?? "",
+      };
+    } catch (err) {
+      console.warn("[email] image attachment fetch failed:", err);
+      // Fall through — the inline <img> still works, attachment just
+      // won't appear. Better than failing the send.
+    }
+  }
+
   const { subject, html, text } = buildEmailBody({
     type,
     senderName,
@@ -288,7 +361,7 @@ export async function sendCardEmail(
 
   const outerBoundary = `----digital-card-outer-${Math.random().toString(36).slice(2)}`;
   const innerBoundary = `----digital-card-inner-${Math.random().toString(36).slice(2)}`;
-  const rawMessage = [
+  const parts: string[] = [
     `From: ${fromEmail}`,
     `To: ${email}`,
     `Subject: ${subject}`,
@@ -319,8 +392,20 @@ export async function sendCardEmail(
     ``,
     vcard,
     ``,
-    `--${outerBoundary}--`,
-  ].join("\r\n");
+  ];
+  if (imageAttachment) {
+    parts.push(
+      `--${outerBoundary}`,
+      `Content-Type: ${imageAttachment.mime}; name="${imageAttachment.filename}"`,
+      `Content-Disposition: attachment; filename="${imageAttachment.filename}"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      imageAttachment.base64,
+      ``,
+    );
+  }
+  parts.push(`--${outerBoundary}--`);
+  const rawMessage = parts.join("\r\n");
   const rawBytes = new TextEncoder().encode(rawMessage);
 
   try {

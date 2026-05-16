@@ -32,14 +32,19 @@ export async function mockCreateSession(
 }
 
 /** Sends the card link + vCard attachment to the given email via AWS SES.
- *  Optionally attaches a PNG snapshot of the rendered card. */
+ *  Optionally attaches a PNG snapshot of the rendered card. The `type`
+ *  selects the email template: `"card"` (default) — the as-shared card
+ *  email; `"image"` — image-focused with the card image attached as a
+ *  downloadable file. */
 export async function mockSendEmail(
   email: string,
   payload: SharePayload,
   cardImageDataUrl?: string | null,
+  type: "card" | "followup" | "image" = "card",
 ): Promise<{ ok: true }> {
   return postJSON<{ ok: true }>(`/api/sessions/${payload.sessionId}/email`, {
     email,
+    type,
     cardImageDataUrl: cardImageDataUrl ?? null,
   });
 }

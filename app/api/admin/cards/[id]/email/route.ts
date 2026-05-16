@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/admin-auth";
 import { getSession, isDbConfigured } from "@/lib/db";
-import { sendCardEmail } from "@/lib/send-card-email";
+import { sendCardEmail, type CardEmailType } from "@/lib/send-card-email";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -10,12 +10,16 @@ type Props = { params: Promise<{ id: string }> };
 type Body = {
   email?: string;
   /** "card" (default) re-sends the as-shared card email; "followup"
-   *  sends the thank-you + share-tips + manage-your-card announcement. */
-  type?: "card" | "followup";
+   *  sends the thank-you + share-tips + manage-your-card announcement;
+   *  "image" sends an image-focused email with the card image attached
+   *  as a downloadable file. */
+  type?: CardEmailType;
   /** Optional base64 data URL (image/png or image/jpeg) — a fresh
    *  rendered-card snapshot captured on the admin detail page. */
   cardImageDataUrl?: string | null;
 };
+
+const VALID_TYPES: CardEmailType[] = ["card", "followup", "image"];
 
 /**
  * Admin-triggered card email (resend / follow-up). Calls the shared
@@ -58,10 +62,14 @@ export async function POST(req: Request, { params }: Props) {
     );
   }
 
+  const requestedType = body.type;
+  const type: CardEmailType =
+    requestedType && VALID_TYPES.includes(requestedType) ? requestedType : "card";
+
   const result = await sendCardEmail({
     id,
     email: target,
-    type: body.type === "followup" ? "followup" : "card",
+    type,
     cardImageDataUrl:
       typeof body.cardImageDataUrl === "string" ? body.cardImageDataUrl : null,
   });
