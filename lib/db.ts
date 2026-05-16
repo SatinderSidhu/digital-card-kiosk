@@ -1,5 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
@@ -7,6 +8,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { CardDetails, TemplateId } from "./types";
+import type { MarketingTemplate } from "./marketing";
 
 /** Days a session/review lives in DynamoDB before TTL deletes it. */
 const TTL_DAYS = 30;
@@ -83,12 +85,26 @@ function reviewsTableName(): string {
   return t;
 }
 
+function templatesTableName(): string {
+  const t = process.env.DYNAMODB_TEMPLATES_TABLE;
+  if (!t) {
+    throw new Error(
+      "DYNAMODB_TEMPLATES_TABLE env var is not set — cannot reach the marketing templates table.",
+    );
+  }
+  return t;
+}
+
 export function isDbConfigured(): boolean {
   return !!process.env.DYNAMODB_TABLE;
 }
 
 export function isReviewsDbConfigured(): boolean {
   return !!process.env.DYNAMODB_REVIEWS_TABLE;
+}
+
+export function isTemplatesDbConfigured(): boolean {
+  return !!process.env.DYNAMODB_TEMPLATES_TABLE;
 }
 
 /**
@@ -250,4 +266,65 @@ export async function listReviews(): Promise<ReviewRecord[]> {
   } while (lastKey);
   items.sort((a, b) => b.createdAt - a.createdAt);
   return items;
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/*                    Marketing templates                          */
+/* ─────────────────────────────────────────────────────────────── */
+
+/** Save (or overwrite) a marketing template row. `updatedAt` is always
+ *  bumped to "now"; `createdAt` is preserved by the caller. */
+export async function saveTemplate(
+  record: MarketingTemplate,
+): Promise<MarketingTemplate> {
+  const full: MarketingTemplate = {
+    ...record,
+    updatedAt: Math.floor(Date.now() / 1000),
+  };
+  await getClient().send(
+    new PutCommand({
+      TableName: templatesTableName(),
+      Item: full,
+    }),
+  );
+  return full;
+}
+
+export async function getTemplate(
+  id: string,
+): Promise<MarketingTemplate | null> {
+  const result = await getClient().send(
+    new GetCommand({
+      TableName: templatesTableName(),
+      Key: { id },
+      ConsistentRead: true,
+    }),
+  );
+  return (result.Item as MarketingTemplate | undefined) ?? null;
+}
+
+export async function listTemplates(): Promise<MarketingTemplate[]> {
+  const items: MarketingTemplate[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+  do {
+    const res = await getClient().send(
+      new ScanCommand({
+        TableName: templatesTableName(),
+        ExclusiveStartKey: lastKey,
+      }),
+    );
+    if (res.Items) items.push(...(res.Items as MarketingTemplate[]));
+    lastKey = res.LastEvaluatedKey;
+  } while (lastKey);
+  items.sort((a, b) => b.updatedAt - a.updatedAt);
+  return items;
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  await getClient().send(
+    new DeleteCommand({
+      TableName: templatesTableName(),
+      Key: { id },
+    }),
+  );
 }

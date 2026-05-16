@@ -4,6 +4,41 @@ All notable changes to this project. Format loosely based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning is
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-05-16
+
+### Added
+- **Admin → Marketing.** A new section in the admin portal for sending
+  rich-HTML emails to cardholders. `/admin/marketing` lists templates,
+  and `/admin/marketing/templates/[id]` is a split editor: a form on
+  the left (name, subject, HTML body) with clickable merge-tag chips,
+  and a live preview iframe on the right that re-renders ~400 ms after
+  each keystroke. The preview's "Render with" dropdown picks any real
+  contact from the cards table; a placeholder data set is used if none
+  is selected. Buttons under the editor: **Save**, **Send test** (one
+  address), **Send to all** (every contact with a valid email,
+  throttled to ~12/sec to stay under SES's 14/sec production cap).
+- **Merge tags** — `{{firstName}}`, `{{fullName}}`, `{{title}}`,
+  `{{company}}`, `{{phone}}`, `{{email}}`, `{{website}}`, `{{cardUrl}}`,
+  `{{manageUrl}}`, `{{cardImageUrl}}`. Defined in
+  [lib/marketing.ts](lib/marketing.ts); rendered with a small,
+  lenient regex engine that silently collapses unknown tags so typos
+  never make it into recipients' inboxes as the literal `{{ ... }}`.
+- **Starter template.** On the empty list page, "Start from example"
+  seeds a re-engagement email — "{{firstName}}, your digital card can
+  be edited any time" — leading with the card image and a primary CTA
+  to the manage link. Good first send for reaching customers who
+  don't realise the card is editable.
+- **Marketing templates DynamoDB table** — schema mirrors the others
+  (partition key `id`, on-demand billing). New env var
+  `DYNAMODB_TEMPLATES_TABLE`; `amplify.yml` bridges it like the rest.
+  IAM addition: `dynamodb:GetItem/PutItem/UpdateItem/DeleteItem/Scan`
+  on the new table.
+
+### Changed
+- **Admin shell nav.** Replaced the back-button toggle with persistent
+  top-level tabs (Overview · Marketing) so navigation between sections
+  is one click from anywhere under `/admin`.
+
 ## [1.6.0] — 2026-05-12
 
 ### Added
