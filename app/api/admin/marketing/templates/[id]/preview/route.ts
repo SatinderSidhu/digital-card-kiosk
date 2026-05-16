@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/admin-auth";
-import {
-  getSession,
-  getTemplate,
-  isDbConfigured,
-  isTemplatesDbConfigured,
-} from "@/lib/db";
+import { getSession, getTemplate, isDbConfigured } from "@/lib/db";
 import {
   PLACEHOLDER_VALUES,
   mergeTags,
@@ -30,9 +25,9 @@ export async function POST(req: Request, { params }: Props) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }

@@ -28,11 +28,11 @@ All notable changes to this project. Format loosely based on
   be edited any time" — leading with the card image and a primary CTA
   to the manage link. Good first send for reaching customers who
   don't realise the card is editable.
-- **Marketing templates DynamoDB table** — schema mirrors the others
-  (partition key `id`, on-demand billing). New env var
-  `DYNAMODB_TEMPLATES_TABLE`; `amplify.yml` bridges it like the rest.
-  IAM addition: `dynamodb:GetItem/PutItem/UpdateItem/DeleteItem/Scan`
-  on the new table.
+- **Marketing templates piggy-back on the existing sessions table**
+  (single-table design — template rows use IDs prefixed with `tmpl_`;
+  the `listSessions` / `listTemplates` helpers filter by the prefix so
+  the two kinds stay cleanly separated in app-land). Zero new
+  DynamoDB resource, no new env var, no new IAM grant.
 
 ### Changed
 - **Admin shell nav.** Replaced the back-button toggle with persistent

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { isAuthenticated } from "@/lib/admin-auth";
 import {
-  isTemplatesDbConfigured,
+  TEMPLATE_ID_PREFIX,
+  isDbConfigured,
   listTemplates,
   saveTemplate,
 } from "@/lib/db";
@@ -21,16 +22,19 @@ type CreateBody = {
 };
 
 function newTemplateId(): string {
-  return randomBytes(6).toString("base64url");
+  // `tmpl_` prefix is how the DB layer distinguishes template rows from
+  // session rows in the shared sessions table — see TEMPLATE_ID_PREFIX
+  // in lib/db.ts.
+  return `${TEMPLATE_ID_PREFIX}${randomBytes(6).toString("base64url")}`;
 }
 
 export async function GET() {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }
@@ -47,9 +51,9 @@ export async function POST(req: Request) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }

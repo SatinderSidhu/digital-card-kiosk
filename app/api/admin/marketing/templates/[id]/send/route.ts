@@ -5,7 +5,6 @@ import {
   getSession,
   getTemplate,
   isDbConfigured,
-  isTemplatesDbConfigured,
   listSessions,
 } from "@/lib/db";
 import {
@@ -34,9 +33,9 @@ export async function POST(req: Request, { params }: Props) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }

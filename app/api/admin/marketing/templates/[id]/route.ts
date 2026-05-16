@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/admin-auth";
 import {
   deleteTemplate,
   getTemplate,
-  isTemplatesDbConfigured,
+  isDbConfigured,
   saveTemplate,
 } from "@/lib/db";
 
@@ -21,9 +21,9 @@ export async function GET(_req: Request, { params }: Props) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }
@@ -42,9 +42,9 @@ export async function PUT(req: Request, { params }: Props) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }
@@ -82,9 +82,9 @@ export async function DELETE(_req: Request, { params }: Props) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isTemplatesDbConfigured()) {
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      { error: "DYNAMODB_TEMPLATES_TABLE is not configured." },
+      { error: "DYNAMODB_TABLE is not configured." },
       { status: 503 },
     );
   }

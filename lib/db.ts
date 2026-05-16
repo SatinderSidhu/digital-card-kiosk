@@ -85,14 +85,16 @@ function reviewsTableName(): string {
   return t;
 }
 
-function templatesTableName(): string {
-  const t = process.env.DYNAMODB_TEMPLATES_TABLE;
-  if (!t) {
-    throw new Error(
-      "DYNAMODB_TEMPLATES_TABLE env var is not set — cannot reach the marketing templates table.",
-    );
-  }
-  return t;
+/**
+ * Marketing templates live in the same DynamoDB table as sessions —
+ * single-table design. Templates use IDs prefixed with `tmpl_`; sessions
+ * never do. Saves one DDB resource + one IAM grant + one env var to
+ * configure. The `listSessions` / `listTemplates` helpers filter by the
+ * prefix so the two kinds stay cleanly separated in app-land.
+ */
+export const TEMPLATE_ID_PREFIX = "tmpl_";
+function isTemplateId(id: string): boolean {
+  return id.startsWith(TEMPLATE_ID_PREFIX);
 }
 
 export function isDbConfigured(): boolean {
@@ -103,9 +105,6 @@ export function isReviewsDbConfigured(): boolean {
   return !!process.env.DYNAMODB_REVIEWS_TABLE;
 }
 
-export function isTemplatesDbConfigured(): boolean {
-  return !!process.env.DYNAMODB_TEMPLATES_TABLE;
-}
 
 /**
  * Save (or overwrite) a session row. Uses on-demand DynamoDB billing so
@@ -218,8 +217,12 @@ export async function listSessions(): Promise<SessionRecord[]> {
     if (res.Items) items.push(...(res.Items as SessionRecord[]));
     lastKey = res.LastEvaluatedKey;
   } while (lastKey);
-  items.sort((a, b) => b.createdAt - a.createdAt);
-  return items;
+  // Filter out marketing templates (single-table design — see
+  // TEMPLATE_ID_PREFIX). Templates and sessions share the same table
+  // but never overlap by ID.
+  const sessions = items.filter((s) => s.id && !isTemplateId(s.id));
+  sessions.sort((a, b) => b.createdAt - a.createdAt);
+  return sessions;
 }
 
 export async function saveReview(
@@ -272,18 +275,24 @@ export async function listReviews(): Promise<ReviewRecord[]> {
 /*                    Marketing templates                          */
 /* ─────────────────────────────────────────────────────────────── */
 
-/** Save (or overwrite) a marketing template row. `updatedAt` is always
- *  bumped to "now"; `createdAt` is preserved by the caller. */
+/** Save (or overwrite) a marketing template row. Stored in the sessions
+ *  table (single-table design — see `TEMPLATE_ID_PREFIX`). `updatedAt`
+ *  is always bumped to "now"; `createdAt` is preserved by the caller. */
 export async function saveTemplate(
   record: MarketingTemplate,
 ): Promise<MarketingTemplate> {
+  if (!isTemplateId(record.id)) {
+    throw new Error(
+      `Template id must start with "${TEMPLATE_ID_PREFIX}" (got: ${record.id})`,
+    );
+  }
   const full: MarketingTemplate = {
     ...record,
     updatedAt: Math.floor(Date.now() / 1000),
   };
   await getClient().send(
     new PutCommand({
-      TableName: templatesTableName(),
+      TableName: tableName(),
       Item: full,
     }),
   );
@@ -293,9 +302,10 @@ export async function saveTemplate(
 export async function getTemplate(
   id: string,
 ): Promise<MarketingTemplate | null> {
+  if (!isTemplateId(id)) return null;
   const result = await getClient().send(
     new GetCommand({
-      TableName: templatesTableName(),
+      TableName: tableName(),
       Key: { id },
       ConsistentRead: true,
     }),
@@ -309,21 +319,23 @@ export async function listTemplates(): Promise<MarketingTemplate[]> {
   do {
     const res = await getClient().send(
       new ScanCommand({
-        TableName: templatesTableName(),
+        TableName: tableName(),
         ExclusiveStartKey: lastKey,
       }),
     );
     if (res.Items) items.push(...(res.Items as MarketingTemplate[]));
     lastKey = res.LastEvaluatedKey;
   } while (lastKey);
-  items.sort((a, b) => b.updatedAt - a.updatedAt);
-  return items;
+  const templates = items.filter((t) => t.id && isTemplateId(t.id));
+  templates.sort((a, b) => b.updatedAt - a.updatedAt);
+  return templates;
 }
 
 export async function deleteTemplate(id: string): Promise<void> {
+  if (!isTemplateId(id)) return;
   await getClient().send(
     new DeleteCommand({
-      TableName: templatesTableName(),
+      TableName: tableName(),
       Key: { id },
     }),
   );
